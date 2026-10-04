@@ -833,6 +833,12 @@ function exportPublicApiDocument() {
         </label>
         <p class="bbs-field-hint">在每条 AI 楼层下方加一个界面:查看该楼摘要与数据变动,并可一键标记「番外」。标为番外的楼层被记忆系统彻底忽略(不摘要、不总结、不注入),适合小剧场/番外篇;取消番外即恢复。</p>
 
+        <label class="bbs-switch-row">
+          <span class="bbs-field-label">在用户消息展示推演</span>
+          <input v-model="ui.showPlotInChat" type="checkbox" class="bbs-checkbox" />
+        </label>
+        <p class="bbs-field-hint">开启后，已保存推演的用户消息下方显示可折叠卡片；点击卡片查看完整内容。关闭只隐藏卡片，不删除推演记录。</p>
+
         <!-- 屏幕悬浮球:配置项多,收进可收缩小分组 -->
         <Collapsible title="屏幕悬浮球" :open="false">
           <label class="bbs-switch-row">

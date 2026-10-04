@@ -139,7 +139,7 @@ function appendDraft() {
       <p class="hint">{{ new Date(plot.data.delivery.at).toLocaleString() }} · {{ plot.data.delivery.source === 'auto' ? '自动推进' : '手动建议' }}<template v-if="plot.data.delivery.input"> · 用户输入：{{ plot.data.delivery.input.slice(0, 80) }}</template></p>
       <p v-if="plot.data.delivery.reused" class="hint">已复用对应用户消息的推演，本次没有额外调用推演 API。</p>
       <p v-if="plot.data.delivery.reason" class="hint">{{ plot.data.delivery.reason }}</p>
-      <p v-if="plot.data.delivery.status === 'submitted'" class="hint">本轮用户输入与推演结果已作为用户角色提示交给酒馆；聊天中显示的用户消息不变。正文模型是否采纳、采纳多少，仍取决于本轮实际生成。</p>
+      <p v-if="plot.data.delivery.status === 'submitted'" class="hint">本轮用户输入与推演结果已交给酒馆；用户消息正文保持原样。可在设置中开启「在用户消息展示推演」，展开查看已保存的建议。正文模型是否采纳仍取决于本轮生成。</p>
       <details v-if="plot.data.delivery.prompt"><summary>查看提交给正文的用户层内容</summary><pre>{{ plot.data.delivery.prompt }}</pre></details>
     </div>
     <KnowledgePanel />

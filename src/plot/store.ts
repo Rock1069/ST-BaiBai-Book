@@ -9,6 +9,7 @@ import { buildStateInjectionText, renderHistoryNodes, selectHistoryNodesBefore }
 import { currentSummaryPromise, fetchCharCard, fetchEncounterProfile, fetchUserPersona, fetchWorldInfo } from '@/memory/engine';
 import { cleanBody, stripThinkBlocks } from '@/memory/timeTag';
 import { prepareWeather } from '@/weather/store';
+import { refreshPlotMessageCards } from '@/plotMessageCards';
 import { buildPlotMessages, normalizePlotData, normalizePlotTurnPlan, plotEligible, plotInjection, PLOT_KEY, PLOT_PROMPT_KEY, shouldRunPlot, type PlotTurnPlan } from './model';
 import { activePlotTasks, currentPlotPreset, exportPlotPreset, extractTaskOutput, parsePlotPresets, recalledDetails, renderPresetMessages, type PlotMaterials, type PlotPreset } from './presets';
 
@@ -151,6 +152,7 @@ function rememberPlot(text: string, source: 'auto' | 'manual', user: STMessage |
   if (!user) return;
   const plan: PlotTurnPlan = { text, source, directive: activePreset()?.finalSystemDirective ?? '', createdAt: Date.now() };
   (user.extra ??= {}).bbs_plot_plan = plan;
+  refreshPlotMessageCards();
   // 正文可能失败或被停止，不能等 AI 成功落楼才保存已付费获得的推演。
   const ctx = getContext();
   if (ctx?.saveChat) void ctx.saveChat().catch(e => console.warn('[柏宝书] 保存用户楼推演失败', e));

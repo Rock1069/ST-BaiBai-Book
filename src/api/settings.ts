@@ -145,6 +145,8 @@ export interface UiPrefs {
   showQuickReply: boolean;
   /** 在每条 AI 楼层内注入摘要锚点(查看该楼摘要数据 + 标记番外)。默认关。 */
   showFloorPanel: boolean;
+  /** 在保存了推演的用户消息下方显示可折叠卡片。默认关。 */
+  showPlotInChat: boolean;
   /** 屏幕边缘悬浮球,点击打开柏宝书。默认关。 */
   showOrb: boolean;
   /** 悬浮球自定义图标:ST 服务器图片路径(saveBase64AsFile 返回的短串);空=用默认书签图标。跨设备同步。 */
@@ -318,6 +320,7 @@ function defaults(): ApiSettings {
       showTopBar: false,
       showQuickReply: false,
       showFloorPanel: false,
+      showPlotInChat: false,
       showOrb: false,
       orbImage: '',
       orbShape: 'bookmark',
@@ -388,6 +391,7 @@ function normalize(raw: unknown): ApiSettings {
     showTopBar: typeof ru.showTopBar === 'boolean' ? ru.showTopBar : d.ui.showTopBar,
     showQuickReply: typeof ru.showQuickReply === 'boolean' ? ru.showQuickReply : d.ui.showQuickReply,
     showFloorPanel: typeof ru.showFloorPanel === 'boolean' ? ru.showFloorPanel : d.ui.showFloorPanel,
+    showPlotInChat: typeof ru.showPlotInChat === 'boolean' ? ru.showPlotInChat : d.ui.showPlotInChat,
     showOrb: typeof ru.showOrb === 'boolean' ? ru.showOrb : d.ui.showOrb,
     orbImage: typeof ru.orbImage === 'string' ? ru.orbImage : d.ui.orbImage,
     orbShape: typeof ru.orbShape === 'string' ? ru.orbShape : d.ui.orbShape,
