@@ -6,7 +6,7 @@ import ModalMask from '@/components/ModalMask.vue';
 import { engineActiveHere } from '@/api/settings';
 import { derivedMeta } from '@/memory/store';
 import { WEATHER_GROUPS, WEATHER_OPTIONS, currentWeather, normalizeWeatherValue, weatherDue, weatherLabel, weatherTemperatureLabel, type WeatherValue } from '@/weather/model';
-import { cancelWeather, chooseWeather, getWeatherMoment, updateWeather, weather } from '@/weather/store';
+import { cancelWeather, chooseWeather, getWeatherMoment, updateCurrentTemperature, updateWeather, weather } from '@/weather/store';
 
 const expanded = ref(true);
 const enabled = computed({ get: () => weather.data.enabled, set: value => {
@@ -30,14 +30,27 @@ const nextUpdate = computed(() => {
 const climateDraft = ref(weather.data.climate);
 watch(() => weather.data.climate, value => { climateDraft.value = value; });
 const manualOpen = ref(false);
+const temperatureOpen = ref(false);
+const temperatureDraft = ref('');
 const group = ref<string>('天空');
 const fixedDraft = ref<WeatherValue>(normalizeWeatherValue(weather.data.manual));
 const groupedOptions = computed(() => WEATHER_OPTIONS.filter(o => o.group === group.value));
 const canSaveFixed = computed(() => !!weatherLabel(fixedDraft.value)
   && (fixedDraft.value.temperatureC === undefined || (Number.isFinite(fixedDraft.value.temperatureC)
     && fixedDraft.value.temperatureC >= -100 && fixedDraft.value.temperatureC <= 70)));
-watch(() => weather.chatKey, () => { manualOpen.value = false; climateDraft.value = weather.data.climate; });
+const canSaveTemperature = computed(() => temperatureDraft.value.trim() === ''
+  || (Number.isFinite(Number(temperatureDraft.value)) && Number(temperatureDraft.value) >= -100 && Number(temperatureDraft.value) <= 70));
+watch(() => weather.chatKey, () => { manualOpen.value = false; temperatureOpen.value = false; climateDraft.value = weather.data.climate; });
 function openFixed(): void { fixedDraft.value = normalizeWeatherValue(weather.data.manual); manualOpen.value = true; }
+function openTemperature(): void {
+  temperatureDraft.value = current.value?.temperatureC === undefined ? '' : String(current.value.temperatureC);
+  temperatureOpen.value = true;
+}
+function saveTemperature(): void {
+  if (!canSaveTemperature.value) return;
+  const value = temperatureDraft.value.trim() === '' ? undefined : Number(temperatureDraft.value);
+  if (updateCurrentTemperature(value)) temperatureOpen.value = false;
+}
 function toggle(id: string): void {
   const selected = fixedDraft.value.conditions;
   fixedDraft.value.conditions = selected.includes(id) ? selected.filter(x => x !== id) : selected.length < 6 ? [...selected, id] : selected;
@@ -62,7 +75,9 @@ function saveClimate(): void { updateWeather({ climate: climateDraft.value }); }
     </header>
     <div v-if="expanded" class="weather-body">
       <p v-if="!weather.available" class="weather-hint">先打开一个聊天，即可设置天气。</p>
-      <div class="weather-now"><strong>{{ current ? weatherLabel(current) : weather.data.enabled ? '等待 AI 选择天气' : '天气控制未开启' }}<span v-if="current && weatherTemperatureLabel(current)"> · {{ weatherTemperatureLabel(current) }}</span></strong><p v-if="current?.description">{{ current.description }}</p></div>
+      <div class="weather-now"><strong>{{ current ? weatherLabel(current) : weather.data.enabled ? '等待 AI 选择天气' : '天气控制未开启' }}</strong><p v-if="current?.description">{{ current.description }}</p></div>
+      <div class="weather-row"><span>室外温度</span><div class="weather-temperature"><strong>{{ current ? weatherTemperatureLabel(current) || '未记录' : weather.data.enabled ? '等待天气选择' : '未开启' }}</strong><button v-if="current" type="button" class="bbs-btn" :disabled="weather.busy" @click="openTemperature">设置</button></div></div>
+      <p v-if="current && !weatherTemperatureLabel(current) && mode === 'auto'" class="weather-hint">这次天气选于加入温度之前；可单独设置，或点击“AI 立即换天气”获得新温度。</p>
       <div class="weather-row"><span>天气模式</span><BbsSelect v-model="mode" :options="[{ value: 'auto', label: 'AI 随机天气' }, { value: 'manual', label: '手动固定天气' }]" aria-label="天气模式" /></div>
       <div v-if="mode === 'auto'" class="weather-row"><span>变换间隔</span><BbsSelect v-model="interval" :options="[{ value: '3', label: '3 故事小时' }, { value: '6', label: '6 故事小时（默认）' }, { value: '12', label: '12 故事小时' }]" aria-label="天气变换间隔" /></div>
       <p class="weather-hint"><strong>下次更新：</strong>{{ nextUpdate }}<br />{{ mode === 'auto' ? '按剧情中的时间计时。到期后 AI 选择不同的新天气并自然过渡。' : '所选天气持续固定，只有你重新选择或切换模式才改变。' }}</p>
@@ -95,6 +110,14 @@ function saveClimate(): void { updateWeather({ climate: climateDraft.value }); }
       <footer class="weather-actions"><button class="bbs-btn" type="button" @click="manualOpen = false">取消</button><button class="bbs-btn bbs-btn-primary" type="button" :disabled="!canSaveFixed || !weather.available" @click="saveFixed">保存并固定</button></footer>
     </div>
   </ModalMask>
+  <ModalMask :open="temperatureOpen" @close="temperatureOpen = false">
+    <div class="bbs-modal weather-modal" role="dialog" aria-modal="true" aria-label="设置室外温度">
+      <header class="bbs-modal-head"><strong class="bbs-modal-title">设置当前室外温度</strong><button class="bbs-item-act" type="button" title="关闭" @click="temperatureOpen = false"><Icon name="close" /></button></header>
+      <p class="weather-hint">只修改当前这次天气的温度，不改变天气类型。留空并保存可清除温度；AI 下次换天气时会重新估计。</p>
+      <label class="weather-field"><span>温度（℃，-100 至 70）</span><input v-model="temperatureDraft" class="bbs-input" type="number" min="-100" max="70" step="0.1" placeholder="例如：18" /></label>
+      <footer class="weather-actions"><button class="bbs-btn" type="button" @click="temperatureOpen = false">取消</button><button class="bbs-btn bbs-btn-primary" type="button" :disabled="!canSaveTemperature" @click="saveTemperature">保存温度</button></footer>
+    </div>
+  </ModalMask>
 </template>
 
 <style scoped>
@@ -110,6 +133,9 @@ function saveClimate(): void { updateWeather({ climate: climateDraft.value }); }
 .weather-now { padding: 12px; border-radius: var(--bbs-radius-sm); background: var(--bbs-accent-soft); color: var(--bbs-accent); overflow-wrap: anywhere; }
 .weather-now p { color: var(--bbs-ink-soft); margin: 7px 0 0; font-size: 12px; line-height: 1.7; white-space: pre-wrap; }
 .weather-row { display: grid; grid-template-columns: 76px minmax(0, 1fr); align-items: center; gap: 12px; font-size: 12px; }
+.weather-temperature { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
+.weather-temperature strong { font-size: 13px; color: var(--bbs-ink); }
+.weather-temperature .bbs-btn { flex: 0 0 auto; padding: 5px 10px; font-size: 12px; }
 .weather-hint { margin: 0; font-size: 11.5px; color: var(--bbs-ink-muted); line-height: 1.8; }
 .weather-error { margin: 0; font-size: 12px; color: var(--bbs-danger); overflow-wrap: anywhere; }
 .weather-details { border-top: 1px solid var(--bbs-line); padding-top: 12px; }

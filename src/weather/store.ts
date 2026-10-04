@@ -7,7 +7,7 @@ import { currentSummaryPromise, fetchWorldInfo } from '@/memory/engine';
 import { cleanBody } from '@/memory/timeTag';
 import { extractJsonObject } from '@/memory/json';
 import { refreshInjection } from '@/memory/inject';
-import { WEATHER_CATALOG, WEATHER_KEY, currentWeather, normalizeWeatherData, parseWeatherChoice, weatherBriefing, weatherDue, weatherLabel, weatherMoment, weatherTemperatureLabel, type WeatherData, type WeatherMoment } from './model';
+import { WEATHER_CATALOG, WEATHER_KEY, currentWeather, normalizeWeatherData, normalizeWeatherValue, parseWeatherChoice, weatherBriefing, weatherDue, weatherLabel, weatherMoment, weatherSignature, weatherTemperatureLabel, type WeatherData, type WeatherMoment } from './model';
 
 export const weather = reactive({ data: normalizeWeatherData(null), busy: false, available: false, error: '', revision: 0, chatKey: '' });
 let scope = '';
@@ -50,6 +50,28 @@ export function updateWeather(patch: Partial<Pick<WeatherData, 'enabled' | 'mode
   // 从关闭/固定切回随机时重新起算保持期，已有AI选择仍可沿用。
   if (weather.data.enabled && weather.data.mode === 'auto' && weather.data.current
     && (!previous.enabled || previous.mode !== 'auto')) weather.data.current.minute = getWeatherMoment().minutes;
+  saveWeather(); refreshInjection(); return true;
+}
+/** 旧天气可单独补录温度，不必强制换成另一组天气。 */
+export function updateCurrentTemperature(temperatureC?: number): boolean {
+  ensureScope();
+  if (!weather.available || !getContext()?.chatMetadata || !currentWeather(weather.data)) return false;
+  if (temperatureC !== undefined && (!Number.isFinite(temperatureC) || temperatureC < -100 || temperatureC > 70)) return false;
+  cancelWeather(); weather.error = '';
+  if (weather.data.mode === 'manual') {
+    weather.data.manual = normalizeWeatherValue({ ...weather.data.manual, temperatureC });
+  } else {
+    const current = weather.data.current;
+    if (!current) return false;
+    const value = normalizeWeatherValue({ ...current.value, temperatureC });
+    weather.data.current = { ...current, value };
+    const last = weather.data.history.length - 1;
+    const recorded = weather.data.history[last];
+    if (recorded && recorded.minute === current.minute && recorded.time === current.time
+      && weatherSignature(recorded.value) === weatherSignature(current.value)) {
+      weather.data.history[last] = { ...recorded, value };
+    }
+  }
   saveWeather(); refreshInjection(); return true;
 }
 async function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
