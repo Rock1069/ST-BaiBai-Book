@@ -30,7 +30,8 @@ const record = (v: unknown): v is Record<string, unknown> => !!v && typeof v ===
 const finite = (v: unknown, fallback = 0): number => typeof v === 'number' && Number.isFinite(v) ? v : fallback;
 export interface WeatherValue { conditions: string[]; custom: string; description: string; temperatureC?: number }
 export interface WeatherMoment { minutes: number; clock: string; debt: number; time: string }
-export interface WeatherChoice { value: WeatherValue; minute: number; time: string; transition: string }
+export interface WeatherCalendar { month: number | null; season: string; evidence: string; source: string; key: string; date: string }
+export interface WeatherChoice { value: WeatherValue; minute: number; time: string; transition: string; calendarKey?: string }
 export interface WeatherData {
   version: 1; enabled: boolean; mode: 'auto' | 'manual'; intervalHours: 3 | 6 | 12; climate: string;
   manual: WeatherValue; current: WeatherChoice | null; history: WeatherChoice[];
@@ -52,7 +53,7 @@ export function weatherSignature(v: WeatherValue): string { return JSON.stringif
 function cleanChoice(raw: unknown): WeatherChoice | null {
   if (!record(raw)) return null;
   const value = normalizeWeatherValue(raw.value); if (!weatherLabel(value)) return null;
-  return { value, minute: finite(raw.minute), time: text(raw.time, 160), transition: text(raw.transition, 300) };
+  return { value, minute: finite(raw.minute), time: text(raw.time, 160), transition: text(raw.transition, 300), calendarKey: text(raw.calendarKey, 80) };
 }
 export function normalizeWeatherData(raw: unknown): WeatherData {
   const o = record(raw) ? raw : {};
@@ -68,6 +69,63 @@ function validLeaf(m: STMessage): boolean {
   const leaf = m.extra?.bbs_leaf;
   return !!leaf?.id && (leaf.swipe ?? 0) === (m.swipe_id ?? 0);
 }
+const SEASON_BY_MONTH = ['冬', '冬', '春', '春', '春', '夏', '夏', '夏', '秋', '秋', '秋', '冬'];
+const LUNAR_SEASON_BY_MONTH = ['春', '春', '春', '夏', '夏', '夏', '秋', '秋', '秋', '冬', '冬', '冬'];
+const CHINESE_MONTHS: Record<string, number> = { 正: 1, 一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10, 十一: 11, 十二: 12, 冬: 11, 腊: 12 };
+const DATE_RE = /(?:^|[^\d])(\d{1,4})(?:年|[\/.-])(\d{1,2})(?:月|[\/.-])(\d{1,2})(?:日)?(?:[\sT]+\d{1,2}:\d{2})?/;
+function calendarFromLine(line: string, source: string): WeatherCalendar | null {
+  const dateMatch = line.match(DATE_RE);
+  const dateMonth = dateMatch ? Number(dateMatch[2]) : null;
+  const numberMonth = line.match(/(?:月份?\s*[：:]?\s*)?(\d{1,2})月/);
+  const chineseMonth = line.match(/(十二|十一|十|正|冬|腊|[一二三四五六七八九])月/);
+  const monthFromChinese = !dateMonth && !numberMonth && !!chineseMonth;
+  const month = dateMonth && dateMonth >= 1 && dateMonth <= 12 ? dateMonth
+    : numberMonth && Number(numberMonth[1]) >= 1 && Number(numberMonth[1]) <= 12 ? Number(numberMonth[1])
+      : chineseMonth ? CHINESE_MONTHS[chineseMonth[1]] : null;
+  const explicitSeason = line.match(/(?:季节|时令|节气)\s*[：:]?\s*(?:初|仲|暮|早|晚|深|隆)?([春夏秋冬])|(?:初|仲|暮|早|晚|深|隆)([春夏秋冬])|([春夏秋冬])(?:季|天)/);
+  const season = (explicitSeason?.[1] || explicitSeason?.[2] || explicitSeason?.[3])
+    || (month ? (monthFromChinese ? LUNAR_SEASON_BY_MONTH : SEASON_BY_MONTH)[month - 1] : '');
+  if (!month && !season) return null;
+  const date = dateMatch ? dateMatch[0].slice(dateMatch[0].indexOf(dateMatch[1])).trim() : '';
+  return { month, season, evidence: line.trim().slice(0, 180), source,
+    key: month ? `月${month}` : `季${season}`, date };
+}
+/** 状态栏位于正文时间标签之外；只读取其中的日期行，不把正文提到的未来日期当成当前月份。 */
+function statusCalendar(mes: string): WeatherCalendar | null {
+  const raw = String(mes || '');
+  const endTags = [...raw.matchAll(/<\/bbs_end>/gi)];
+  const starts = [...raw.matchAll(/<bbs_start\b[^>]*>/gi)];
+  const marked = [...raw.matchAll(/(?:^|\n)\s*(?:【|\[)\s*(?:状态栏|当前状态|场景状态)\s*(?:】|\])/gim)];
+  const markerStart = marked.at(-1)?.index ?? -1;
+  const nextBody = starts.find(start => start.index! > markerStart)?.index ?? raw.length;
+  const parts = [
+    ...[...raw.matchAll(/<(?:snow\b|status\b|status_bar\b|statusbar\b|状态栏|状态)[^>]*>([\s\S]*?)<\/(?:snow|status|status_bar|statusbar|状态栏|状态)>/gi)].reverse().map(match => ({ raw: match[1], named: true })),
+    ...(marked.length ? [{ raw: raw.slice(markerStart, nextBody), named: true }] : []),
+    ...(endTags.length ? [{ raw: raw.slice(endTags.at(-1)!.index! + endTags.at(-1)![0].length), named: false }] : []),
+    ...(starts.length ? [{ raw: raw.slice(0, starts.at(-1)!.index!), named: false }] : []),
+  ];
+  for (const part of parts) {
+    const lines = part.raw.replace(/<bbs_(?:items|vars)\b[^>]*>[\s\S]*?<\/bbs_(?:items|vars)>/gi, '')
+      .replace(/<[^>]+>/g, '\n').split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+    const selected = lines.find(line => /(?:当前|剧情|故事)?(?:日期|时间|时刻|月份|季节)/.test(line) && calendarFromLine(line, '正文状态栏'))
+      || lines.find(line => (part.named || DATE_RE.test(line)) && calendarFromLine(line, '正文状态栏'));
+    if (selected) return calendarFromLine(selected, '正文状态栏');
+  }
+  return null;
+}
+/** 优先采用最新 AI 正文状态栏的月份；缺失时回退正文时间标签或叶子时间。 */
+export function weatherCalendar(chat: STMessage[], moment: WeatherMoment): WeatherCalendar | null {
+  for (let i = chat.length - 1; i >= 0; i--) {
+    const m = chat[i];
+    if (m.extra?.bbs_omit || m.is_user || (m.is_system && m.extra?.type)) continue;
+    const status = statusCalendar(m.mes || '');
+    if (status) return status;
+    const tag = parseTimeRange(clampToTimeTags(m.mes || ''));
+    const fromTag = calendarFromLine(tag.end || tag.start || '', '正文时间标签');
+    if (fromTag) return fromTag;
+  }
+  return calendarFromLine(moment.time, '故事时间') || null;
+}
 /** 重放故事时间，不使用 Date.now 或现实定时器。相对时长与随后补齐的日期抵扣。 */
 export function weatherMoment(chat: STMessage[], seed: WeatherMoment | null = null): WeatherMoment {
   const out: WeatherMoment = seed ? { ...seed } : { minutes: 0, clock: '', debt: 0, time: '' };
@@ -77,7 +135,9 @@ export function weatherMoment(chat: STMessage[], seed: WeatherMoment | null = nu
     // carryover的记忆种子时间可能早于正文时钟；天气已有独立种子，不重复消费它。
     if (seed && leaf?.seed) continue;
     const tag = parseTimeRange(clampToTimeTags(m.mes || ''));
-    const time = tag.end || tag.start || leaf?.timeEnd || leaf?.timeStart || leaf?.delta.time || '';
+    const tagTime = tag.end || tag.start || '';
+    const statusDate = statusCalendar(m.mes || '')?.date || '';
+    const time = (parseStoryClock(tagTime) ? tagTime : statusDate) || tagTime || leaf?.timeEnd || leaf?.timeStart || leaf?.delta.time || '';
     const old = parseStoryClock(out.clock), next = parseStoryClock(time);
     const relative = Math.max(0, finite(leaf?.delta.weatherElapsedMinutes));
     const comparable = old && next && old.calendar === next.calendar && old.precision === next.precision;
@@ -91,8 +151,13 @@ export function weatherMoment(chat: STMessage[], seed: WeatherMoment | null = nu
   }
   return out;
 }
-export function weatherDue(data: WeatherData, moment: WeatherMoment): boolean {
-  return data.enabled && data.mode === 'auto' && (!data.current || moment.minutes - data.current.minute >= data.intervalHours * 60);
+export function weatherDue(data: WeatherData, moment: WeatherMoment, calendar: WeatherCalendar | null = null): boolean {
+  const oldKey = data.current?.calendarKey || '';
+  const newKey = calendar?.key || '';
+  const calendarChanged = !!newKey && (!oldKey || (oldKey[0] === newKey[0] && oldKey !== newKey));
+  return data.enabled && data.mode === 'auto' && (!data.current || calendarChanged
+    || data.current.value.temperatureC === undefined
+    || moment.minutes - data.current.minute >= data.intervalHours * 60);
 }
 export function currentWeather(data: WeatherData): WeatherValue | null {
   return !data.enabled ? null : data.mode === 'manual' ? data.manual : data.current?.value ?? null;
@@ -103,7 +168,7 @@ export function weatherBriefing(data: WeatherData): string {
   return `[天气控制·${data.mode === 'manual' ? '用户手动固定' : 'AI按故事时间选择'}]\n当前天气：${weatherLabel(v)}${typeof v.temperatureC === 'number' ? `\n室外温度：${data.mode === 'auto' ? '约' : ''}${weatherTemperatureLabel(v)}` : ''}${v.description ? `\n表现：${v.description}` : ''}`
     + (data.mode === 'auto' && data.current?.transition ? `\n转变：${data.current.transition}` : '')
     + (data.climate ? `\n气候设定：${data.climate}` : '')
-    + (data.mode === 'manual' ? '\n此天气持续固定，只有用户在天气卡片重新选择或切换模式才能改变；剧情、角色能力及故事时间推进不得覆盖该选择。' : `\n在下一次天气选择前沿用以上天气；每${data.intervalHours}故事小时才重新选择，不可自行提前改成其他天气。`)
+    + (data.mode === 'manual' ? '\n此天气持续固定，只有用户在天气卡片重新选择或切换模式才能改变；剧情、角色能力及故事时间推进不得覆盖该选择。' : `\n在下一次天气选择前沿用以上天气；插件按${data.intervalHours}故事小时或状态栏月份变化重新估计，正文不要自行改写天气与温度。`)
     + '\n将天气与温度自然用于环境与人物行动；温度是幕后环境信息，历史或架空角色不必直接说摄氏度。室内不强行表现室外天气，不罗列天气面板，不因天气自动宣告灾害结果。';
 }
 /** 严格校验模型选择，禁止用改写描述绕过“换一种天气”。 */

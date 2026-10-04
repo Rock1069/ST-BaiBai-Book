@@ -6,7 +6,7 @@ import ModalMask from '@/components/ModalMask.vue';
 import { engineActiveHere } from '@/api/settings';
 import { derivedMeta } from '@/memory/store';
 import { WEATHER_GROUPS, WEATHER_OPTIONS, currentWeather, normalizeWeatherValue, weatherDue, weatherLabel, weatherTemperatureLabel, type WeatherValue } from '@/weather/model';
-import { cancelWeather, chooseWeather, getWeatherMoment, updateCurrentTemperature, updateWeather, weather } from '@/weather/store';
+import { cancelWeather, chooseWeather, getWeatherCalendar, getWeatherMoment, updateCurrentTemperature, updateWeather, weather } from '@/weather/store';
 
 const expanded = ref(true);
 const enabled = computed({ get: () => weather.data.enabled, set: value => {
@@ -19,11 +19,12 @@ const interval = computed({ get: () => String(weather.data.intervalHours), set: 
 const activeHere = computed(() => engineActiveHere());
 const current = computed(() => currentWeather(weather.data));
 const moment = computed(() => { void derivedMeta.rev; void weather.revision; return getWeatherMoment(); });
+const calendar = computed(() => { void derivedMeta.rev; void weather.revision; return getWeatherCalendar(); });
 const nextUpdate = computed(() => {
   if (!weather.data.enabled) return '未开启';
   if (weather.data.mode === 'manual') return '手动固定，等待你重新选择';
   if (!weather.data.current) return '首次选择待完成';
-  if (weatherDue(weather.data, moment.value)) return '已到期，下次正文／推演前选择新天气';
+  if (weatherDue(weather.data, moment.value, calendar.value)) return '已到期，下次正文／推演前选择新天气和温度';
   const left = Math.max(0, weather.data.intervalHours * 60 - (moment.value.minutes - weather.data.current.minute));
   return `再推进约${Math.round(left / 60 * 10) / 10}故事小时后更新`;
 });
@@ -77,11 +78,12 @@ function saveClimate(): void { updateWeather({ climate: climateDraft.value }); }
       <p v-if="!weather.available" class="weather-hint">先打开一个聊天，即可设置天气。</p>
       <div class="weather-now"><strong>{{ current ? weatherLabel(current) : weather.data.enabled ? '等待 AI 选择天气' : '天气控制未开启' }}</strong><p v-if="current?.description">{{ current.description }}</p></div>
       <div class="weather-row"><span>室外温度</span><div class="weather-temperature"><strong>{{ current ? weatherTemperatureLabel(current) || '未记录' : weather.data.enabled ? '等待天气选择' : '未开启' }}</strong><button v-if="current" type="button" class="bbs-btn" :disabled="weather.busy" @click="openTemperature">设置</button></div></div>
-      <p v-if="current && !weatherTemperatureLabel(current) && mode === 'auto'" class="weather-hint">这次天气选于加入温度之前；可单独设置，或点击“AI 立即换天气”获得新温度。</p>
+      <p v-if="mode === 'auto'" class="weather-hint">月份依据：{{ calendar ? `${calendar.source} · ${calendar.month ? `${calendar.month}月` : calendar.season ? `${calendar.season}季` : '未明确'}` : '正文暂无明确月份' }}。AI 会结合地点、季节和故事时间估计温度。</p>
+      <p v-if="current && !weatherTemperatureLabel(current) && mode === 'auto'" class="weather-hint">当前温度未记录；下次正文或推演前会由 AI 补充，也可手动设置。</p>
       <div class="weather-row"><span>天气模式</span><BbsSelect v-model="mode" :options="[{ value: 'auto', label: 'AI 随机天气' }, { value: 'manual', label: '手动固定天气' }]" aria-label="天气模式" /></div>
       <div v-if="mode === 'auto'" class="weather-row"><span>变换间隔</span><BbsSelect v-model="interval" :options="[{ value: '3', label: '3 故事小时' }, { value: '6', label: '6 故事小时（默认）' }, { value: '12', label: '12 故事小时' }]" aria-label="天气变换间隔" /></div>
-      <p class="weather-hint"><strong>下次更新：</strong>{{ nextUpdate }}<br />{{ mode === 'auto' ? '按剧情中的时间计时。到期后 AI 选择不同的新天气并自然过渡。' : '所选天气持续固定，只有你重新选择或切换模式才改变。' }}</p>
-      <p v-if="mode === 'auto' && !moment.clock" class="weather-hint">故事日期暂无法计算，可由摘要中明确经过的时长计时，或点击“AI 立即换天气”。</p>
+      <p class="weather-hint"><strong>下次更新：</strong>{{ nextUpdate }}<br />{{ mode === 'auto' ? '按剧情中的时间计时；状态栏月份变化时也会更新。AI 每次重新估计天气和温度。' : '所选天气持续固定，只有你重新选择或切换模式才改变。' }}</p>
+      <p v-if="mode === 'auto' && !moment.clock" class="weather-hint">故事日期暂无法计算；仍可读取状态栏月份变化，或由摘要中明确经过的时长计时。</p>
       <div v-if="mode === 'auto'" class="weather-actions">
         <button class="bbs-btn" type="button" :disabled="!weather.available || !weather.data.enabled || weather.busy || !activeHere" @click="chooseWeather(true)">{{ weather.busy ? 'AI 选择中…' : current ? 'AI 立即换天气' : 'AI 选择天气' }}</button>
         <button v-if="weather.busy" class="bbs-btn" type="button" @click="cancelWeather">取消</button>
@@ -92,7 +94,7 @@ function saveClimate(): void { updateWeather({ climate: climateDraft.value }); }
       <details class="weather-details"><summary>气候设定与选择记录</summary>
         <label class="weather-field"><span>气候／环境补充（可选）</span><textarea v-model="climateDraft" class="bbs-input" rows="2" maxlength="400" placeholder="例如：沿海城市，秋季；或架空世界的特殊气候" /></label>
         <button class="bbs-btn" type="button" :disabled="!weather.available || climateDraft === weather.data.climate" @click="saveClimate">保存气候设定</button>
-        <p class="weather-hint">AI沿用摘要 API 渠道，只在首次／到期／主动更换时调用。设置随聊天保存。天气控制会发送给正文与推演，独立于记忆注入分项。</p>
+        <p class="weather-hint">AI沿用摘要 API 渠道，在首次、到期、状态栏月份变化或主动更换时调用。设置随聊天保存。天气控制会发送给正文与推演，独立于记忆注入分项。</p>
         <ol v-if="weather.data.history.length" class="weather-history"><li v-for="(record, i) in [...weather.data.history].reverse()" :key="i"><small>{{ record.time || '故事时间未明确' }}</small><strong>{{ weatherLabel(record.value) }}<span v-if="weatherTemperatureLabel(record.value)"> · {{ weatherTemperatureLabel(record.value) }}</span></strong><p v-if="record.transition">{{ record.transition }}</p></li></ol>
       </details>
     </div>
