@@ -49,6 +49,8 @@ interface UiState {
   showQuickReply: boolean;
   /** 楼层内摘要锚点(查看该楼数据 + 标番外,默认关) */
   showFloorPanel: boolean;
+  /** 用户消息下方展示可折叠的剧情推演(默认关) */
+  showPlotInChat: boolean;
   /** 屏幕边缘悬浮球(默认关) */
   showOrb: boolean;
   /** 悬浮球自定义图标(ST 服务器图片路径;空=默认书签图标) */
@@ -103,6 +105,7 @@ export const ui = reactive<UiState>({
   showTopBar: apiSettings.ui.showTopBar,
   showQuickReply: apiSettings.ui.showQuickReply,
   showFloorPanel: apiSettings.ui.showFloorPanel,
+  showPlotInChat: apiSettings.ui.showPlotInChat,
   showOrb: apiSettings.ui.showOrb,
   orbImage: apiSettings.ui.orbImage,
   orbShape: validOrbShape(apiSettings.ui.orbShape),
@@ -118,6 +121,7 @@ onSettingsReady(() => {
   ui.showTopBar = apiSettings.ui.showTopBar;
   ui.showQuickReply = apiSettings.ui.showQuickReply;
   ui.showFloorPanel = apiSettings.ui.showFloorPanel;
+  ui.showPlotInChat = apiSettings.ui.showPlotInChat;
   ui.showOrb = apiSettings.ui.showOrb;
   ui.orbImage = apiSettings.ui.orbImage;
   ui.orbShape = validOrbShape(apiSettings.ui.orbShape);
@@ -134,6 +138,7 @@ watch(
     ui.showTopBar,
     ui.showQuickReply,
     ui.showFloorPanel,
+    ui.showPlotInChat,
     ui.showOrb,
     ui.orbImage,
     ui.orbShape,
@@ -147,6 +152,7 @@ watch(
     apiSettings.ui.showTopBar = ui.showTopBar;
     apiSettings.ui.showQuickReply = ui.showQuickReply;
     apiSettings.ui.showFloorPanel = ui.showFloorPanel;
+    apiSettings.ui.showPlotInChat = ui.showPlotInChat;
     apiSettings.ui.showOrb = ui.showOrb;
     apiSettings.ui.orbImage = ui.orbImage;
     apiSettings.ui.orbShape = ui.orbShape;
