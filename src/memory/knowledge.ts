@@ -1,4 +1,4 @@
-import type { KnowledgeDelta, KnowledgeFact } from './types';
+import type { KnowledgeDelta, KnowledgeEvent, KnowledgeFact } from './types';
 
 const statuses = new Set<KnowledgeFact['status']>(['known', 'heard', 'suspected', 'unknown']);
 const line = (value: unknown, max: number): string => typeof value === 'string'
@@ -11,6 +11,108 @@ function hash(value: string): string {
   return (n >>> 0).toString(36);
 }
 const legacyFactId = (fact: string): string => `kf:legacy:${hash(factKey(fact))}`;
+
+/** 只接受本轮正文中能逐字定位的事件。旧式逐角色记录仍可读，但新摘要不再产生它。 */
+export function groundedKnowledgeEvents(raw: unknown, content: string, roster: readonly string[], context: KnowledgeGroundingContext): KnowledgeEvent[] {
+  if (!Array.isArray(raw) || !context.leafId) return [];
+  const body = content.replace(/\s+/g, ' ');
+  const participants = [...new Set((context.sceneParticipants ?? []).map(name => line(name, 80)).filter(Boolean))];
+  const pairScene = participants.length === 2 && participants.every(name => body.includes(name))
+    && /房内|屋内|室内|厅内|堂内|阁内|书房|签押房|寝室|卧室|包厢|密室/.test(body)
+    && !/众人|人群|围观|满屋人|一众|旁听|偷听|隔墙有耳/.test(body);
+  const knownActors = new Map(roster.map(name => [name.toLocaleLowerCase(), name]));
+  const prior = new Map((context.prior ?? []).filter(f => f.factId).map(f => [f.factId!, f]));
+  const byFact = new Map((context.prior ?? []).map(f => [factKey(f.fact), f]));
+  const result: KnowledgeEvent[] = [];
+  for (const item of raw.slice(0, 24)) {
+    if (!item || typeof item !== 'object') continue;
+    const r = item as Record<string, unknown>;
+    const fact = line(r.fact, 240), evidence = line(r.evidence, 240), source = line(r.source, 120);
+    if (!fact || evidence.length < 4 || !source || (r.kind !== 'event' && r.kind !== 'transmission')) continue;
+    const at = body.indexOf(evidence);
+    if (at < 0) continue;
+    const message = messageAt(body, at);
+    const near = body.slice(Math.max(0, at - 200), at + evidence.length + 200);
+    const audience = [...new Set((Array.isArray(r.audience) ? r.audience : [])
+      .map(value => knownActors.get(line(value, 80).toLocaleLowerCase())).filter((value): value is string => !!value))]
+      .filter(actor => isSpeakerAt(body, actor, at) || message.includes(actor) || near.includes(actor)
+        || (pairScene && participants.some(name => name.toLocaleLowerCase() === actor.toLocaleLowerCase())));
+    if (!audience.length) continue;
+    const mode = r.mode === 'heard' || r.mode === 'suspected' ? r.mode : 'known';
+    if (r.kind === 'transmission' && !transmissionEvidence.test(message)) continue;
+    if (mode === 'known' && quotedQuestionAt(body, at) && !transmissionEvidence.test(message)) continue;
+    const requested = prior.get(line(r.factId, 80));
+    if (requested && factKey(requested.fact) !== factKey(fact)) continue;
+    const old = requested ?? byFact.get(factKey(fact));
+    if (old && r.kind === 'event') continue;
+    if (r.kind === 'transmission' && !old) continue;
+    let visibility: KnowledgeEvent['visibility'] = 'unclear';
+    if (r.visibility === 'open') visibility = 'open';
+    else if (r.kind === 'event' && pairScene && participants.every(name =>
+      audience.some(actor => actor.toLocaleLowerCase() === name.toLocaleLowerCase()))) visibility = 'private';
+    else if (r.visibility === 'private' && privateEvidence.test(message)) visibility = 'private';
+    if (visibility === 'private' && pairScene && audience.some(actor =>
+      !participants.some(name => name.toLocaleLowerCase() === actor.toLocaleLowerCase()))) continue;
+    const factId = old?.factId ?? `kf:${hash(context.leafId)}:${result.length}`;
+    result.push({ id: `${context.leafId}:ke:${result.length}`, factId, fact: old?.fact ?? fact,
+      kind: r.kind, audience, visibility, mode, source, evidence, leafId: context.leafId,
+      ...(Number.isInteger(context.floor) ? { floor: context.floor } : {}), ...(context.time ? { time: context.time } : {}) });
+  }
+  return result;
+}
+
+export function cleanKnowledgeEvents(raw: unknown): KnowledgeEvent[] {
+  if (!Array.isArray(raw)) return [];
+  const result: KnowledgeEvent[] = [];
+  for (const item of raw.slice(0, 64)) {
+    if (!item || typeof item !== 'object') continue;
+    const r = item as Record<string, unknown>;
+    const id = line(r.id, 120), factId = line(r.factId, 80), fact = line(r.fact, 240);
+    const evidence = line(r.evidence, 240), leafId = line(r.leafId, 80), source = line(r.source, 120);
+    const audience = [...new Set((Array.isArray(r.audience) ? r.audience : []).map(v => line(v, 80)).filter(Boolean))];
+    if (!id || !factId || !fact || !evidence || !leafId || !source || !audience.length) continue;
+    if (r.kind !== 'event' && r.kind !== 'transmission') continue;
+    if (r.mode !== 'known' && r.mode !== 'heard' && r.mode !== 'suspected') continue;
+    result.push({ id, factId, fact, evidence, leafId, source, audience, kind: r.kind, mode: r.mode,
+      visibility: r.visibility === 'private' || r.visibility === 'open' ? r.visibility : 'unclear',
+      ...(Number.isInteger(r.floor) ? { floor: Number(r.floor) } : {}), ...(line(r.time, 100) ? { time: line(r.time, 100) } : {}) });
+  }
+  return result;
+}
+
+export function projectKnowledge(events: readonly KnowledgeEvent[], roster: readonly string[], legacy: readonly KnowledgeFact[] = []): KnowledgeFact[] {
+  const projected = new Map<string, KnowledgeFact>();
+  const factOrder = new Map<string, true>();
+  const touch = (id: string) => { factOrder.delete(id); factOrder.set(id, true); };
+  for (const row of legacy) projected.set(`${row.actor.toLocaleLowerCase()}\u0000${row.factId || factKey(row.fact)}`, row);
+  for (const row of legacy) touch(row.factId || factKey(row.fact));
+  const byId = new Map<string, KnowledgeEvent>();
+  for (const event of events) {
+    touch(event.factId);
+    if (event.kind === 'event' && !byId.has(event.factId)) byId.set(event.factId, event);
+    const origin = byId.get(event.factId) ?? event;
+    for (const actor of event.audience) {
+      const id = `${actor.toLocaleLowerCase()}\u0000${event.factId}`;
+      const previous = projected.get(id);
+      const rank = { unknown: 0, suspected: 1, heard: 2, known: 3 };
+      if (previous && rank[previous.status] > rank[event.mode]) continue;
+      projected.set(id, { actor, factId: event.factId, fact: origin.fact, status: event.mode,
+        source: event.source, origin: { leafId: origin.leafId, floor: origin.floor, time: origin.time, evidence: origin.evidence } });
+    }
+  }
+  for (const event of byId.values()) {
+    if (event.visibility !== 'private') continue;
+    for (const actor of roster) {
+      if (event.audience.some(name => name.toLocaleLowerCase() === actor.toLocaleLowerCase())) continue;
+      const id = `${actor.toLocaleLowerCase()}\u0000${event.factId}`;
+      if (!projected.has(id)) projected.set(id, { actor, factId: event.factId, fact: event.fact,
+        status: 'unknown', source: '未接触该私密场景，暂无传播记录',
+        origin: { leafId: event.leafId, floor: event.floor, time: event.time, evidence: event.evidence } });
+    }
+  }
+  const current = new Set([...factOrder.keys()].slice(-60));
+  return [...projected.values()].filter(row => current.has(row.factId || factKey(row.fact)));
+}
 
 export interface KnowledgeGroundingContext {
   prior?: readonly KnowledgeFact[];
@@ -36,7 +138,7 @@ function isSpeakerAt(body: string, actor: string, index: number): boolean {
 
 const privateEvidence = /独处|独自(?:在|和|与)|私下|私密|保密|秘密|仅.{0,24}(?:知道|知情|在场|目睹|参与)|只有.{0,24}(?:知道|知情|在场|目睹|参与)|(?:没人|无人|没有其他人|其他人都不在).{0,16}(?:知道|知情|看见|看到|听见|听到|在场)|(?:不让|没让|没有让|未让|没有告诉|没告诉|未告知|没有告知|未被告知|未被发现|未被看见|未被听见)|关上(?:了)?门|锁上(?:了)?门|门外无人|房间里只剩|两人之间|两人世界|不为他人所知|无人得知|无人知晓|(?:alone|in private|privately|secret(?:ly)?|behind closed doors|nobody else (?:knew|saw|heard)|no one else (?:knew|saw|heard)|without telling|unobserved)/i;
 const explicitIgnorance = /不知道|不知情|不知晓|未得知|没有得知|没得知|没听说|未听说|没有听到|没听到|没有听见|没听见|没有看到|没看到|没有看见|没看见|没有告诉|没告诉|未告知|未被告知|并不知|(?:don't|doesn't|didn't|wasn't|weren't) know|wasn't told|didn't hear|didn't see/i;
-const transmissionEvidence = /告知|告诉|转告|透露|传话|通报|汇报|听说|听闻|听到|听见|亲眼|亲耳|目睹|看见|看到|发现|查证|证实|得知|获悉|(?:told|heard|saw|witnessed|learned)/i;
+const transmissionEvidence = /告知|告诉|转告|透露|传话|通报|汇报|听说|听闻|听到|听见|亲眼|亲耳|目睹|看见|看到|发现|查证|证实|得知|获悉|猜测|怀疑|推断|意识到|(?:told|heard|saw|witnessed|learned|suspected|inferred)/i;
 
 function quotedQuestionAt(body: string, index: number): boolean {
   for (const [open, close] of [['“', '”'], ['「', '」'], ['『', '』']] as const) {
@@ -196,10 +298,14 @@ export function formatKnowledge(facts: readonly KnowledgeFact[] | undefined, sho
   if (!facts?.length) return '';
   const labels = { known: '确知', heard: '听说', suspected: '怀疑', unknown: '明确不知' };
   const groups = new Map<string, KnowledgeFact[]>();
-  for (const fact of facts.slice(-60)) groups.set(fact.actor, [...(groups.get(fact.actor) ?? []), fact]);
+  for (const fact of facts) groups.set(fact.factId || factKey(fact.fact), [...(groups.get(fact.factId || factKey(fact.fact)) ?? []), fact]);
   return [
-    '【角色认知边界｜来自已经发生的正文】',
-    '按“事实 × 角色”分别记账；摘要是读者视角，不能据摘要内容推定任何角色知情。只允许角色按其亲历、听到、被告知或明确推测的信息行动；世界书、角色卡、旁白、其他角色内心及推演草案均不是该角色的知识。私密事件或仅两人参与的室内谈话，未在场且没有传播路径的角色不得知道具体内容。听说/怀疑不得写成确知；只有正文展示了新的传播路径，才更新其认知。',
-    ...[...groups].map(([actor, entries]) => `${actor}：${entries.map(e => `${showIds && e.factId ? `[${e.factId}]` : ''}${labels[e.status]}「${e.fact}」（来源：${e.source}）`).join('；')}`),
+    '【角色认知边界｜正文事件与传播路径】',
+    '摘要和全知叙述不代表角色知情；未列名者无可靠获知证据。私密事件中明确未接触者不得知道具体内容；只有正文出现新传播路径才能改变。听说和怀疑不得升级为确知。',
+    ...[...groups].slice(-24).map(([id, entries]) => {
+      const positive = entries.filter(e => e.status !== 'unknown');
+      const unknown = entries.filter(e => e.status === 'unknown');
+      return `${showIds ? `[${id}]` : ''}${entries[0].fact}｜${positive.map(e => `${e.actor}${labels[e.status]}(${e.source})`).join('、') || '无人可靠获知'}${unknown.length ? `；未接触：${unknown.map(e => e.actor).join('、')}` : ''}`;
+    }),
   ].join('\n');
 }

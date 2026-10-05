@@ -88,6 +88,7 @@ function deltaHasData(delta: StoredDelta): boolean {
     delta.npcs?.update?.length ||
     delta.npcs?.remove?.length ||
     delta.knowledge?.upsert?.length ||
+    delta.knowledgeEvents?.length ||
     delta.plans?.add?.length ||
     delta.plans?.resolve?.length ||
     delta.plans?.remove?.length ||
@@ -184,7 +185,13 @@ function encodeStateAsDelta(state: ReturnType<typeof deriveMemory>, leafId: stri
       })),
     };
   }
-  if (state.knowledge.length) delta.knowledge = { upsert: state.knowledge.map(f => ({ ...f })) };
+  if (state.knowledgeEvents.length) {
+    delta.knowledgeEvents = state.knowledgeEvents.map(event => ({ ...event, audience: [...event.audience] }));
+    // 旧聊天的台账仍可接续；事件视角由重放自动投影，不写成重复的角色行。
+    const eventIds = new Set(state.knowledgeEvents.map(event => event.factId));
+    const legacy = state.knowledge.filter(f => !f.factId || !eventIds.has(f.factId));
+    if (legacy.length) delta.knowledge = { upsert: legacy.map(f => ({ ...f })) };
+  } else if (state.knowledge.length) delta.knowledge = { upsert: state.knowledge.map(f => ({ ...f })) };
   const openPlans = state.plans.filter(p => p.status === 'open');
   if (openPlans.length) {
     delta.plans = {

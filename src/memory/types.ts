@@ -484,8 +484,10 @@ export interface BaibaiMemory {
   scenes: MemScene[];
   /** 派生缓存:登场过的 NPC(从叶子 delta 重放) */
   npcs: MemNpc[];
-  /** 从已发生正文逐楼重放的角色认知；推演建议不参与结算。 */
+  /** 从正文事件投影的角色视角，兼容旧聊天的逐人记录。 */
   knowledge: KnowledgeFact[];
+  /** 正文证据事件；角色视角由事件和传播路径重放生成。 */
+  knowledgeEvents: KnowledgeEvent[];
   /** 派生缓存:近期物品变动日志(重放时产出,只留最近若干条) */
   itemLog: ItemLogEntry[];
   /** 派生缓存:主角及角色生活小档案(从叶子 delta 重放) */
@@ -512,6 +514,7 @@ export function createEmptyMemory(): BaibaiMemory {
     scenes: [],
     npcs: [],
     knowledge: [],
+    knowledgeEvents: [],
     itemLog: [],
     varTemplates: { global: { json: {}, meaning: '', rule: '' }, char: { json: {}, meaning: '', rule: '' }, chat: { json: {}, meaning: '', rule: '' } },
     vars: {},
@@ -519,7 +522,7 @@ export function createEmptyMemory(): BaibaiMemory {
   };
 }
 
-/** 一个角色对一件剧情关键事实的认知状态。缺项表示没有可靠证据表明其知晓。 */
+/** 角色视角的派生记录；缺项表示没有可靠证据表明其知晓。 */
 export interface KnowledgeFact {
   /** 同一关键事实的稳定编号；旧叶子按事实原文生成兼容编号。 */
   factId?: string;
@@ -540,6 +543,34 @@ export interface KnowledgeObservation extends KnowledgeFact {
 export interface KnowledgeDelta {
   upsert?: KnowledgeFact[];
   remove?: { actor: string; fact: string; factId?: string }[];
+}
+
+/** 一条正文事实或信息传播；audience 只列实际接触信息的人，不枚举不知者。 */
+export interface KnowledgeEvent {
+  id: string;
+  factId: string;
+  fact: string;
+  kind: 'event' | 'transmission';
+  audience: string[];
+  /** private 仅在正文明确排除旁人时使用；未列入 audience 的人不得凭叙述获知。 */
+  visibility: 'private' | 'open' | 'unclear';
+  mode: 'known' | 'heard' | 'suspected';
+  source: string;
+  evidence: string;
+  leafId: string;
+  floor?: number;
+  time?: string;
+}
+
+export interface KnowledgeEventObservation {
+  kind: 'event' | 'transmission';
+  factId?: string;
+  fact: string;
+  audience: string[];
+  visibility?: 'private' | 'open' | 'unclear';
+  mode?: 'known' | 'heard' | 'suspected';
+  source: string;
+  evidence: string;
 }
 
 /* ============ AI 返回的增量 JSON 结构 ============ */
@@ -685,6 +716,7 @@ export interface SummaryDelta {
     remove?: string[];
   };
   knowledge?: { upsert?: KnowledgeObservation[]; remove?: { actor: string; fact: string; factId?: string; evidence: string }[] };
+  knowledgeEvents?: KnowledgeEventObservation[];
   /** 指令型:计划/悬念增删 */
   plans?: {
     /** createdTime/targetTime 由 AI 直接输出(故事内时间字符串);targetTime 允许模糊或省略 */
@@ -756,6 +788,7 @@ export interface StoredDelta {
     remove?: string[];
   };
   knowledge?: KnowledgeDelta;
+  knowledgeEvents?: KnowledgeEvent[];
   plans?: {
     add?: { kind: 'plan' | 'suspense'; content: string; createdTime?: string; targetTime?: string }[];
     /** 了结:稳定 plan id(带 outcome/reason);裸字符串兼容旧数据 */

@@ -9,7 +9,7 @@ import { readItemsTagText, writeItemLogTag, writeVarLogTag } from './timeTag';
 import { scheduleVectorIndex } from './vector';
 import { invalidateRecallCache } from './vector/cache';
 import { createEmptyMemory } from './types';
-import { applyKnowledge, cleanKnowledge } from './knowledge';
+import { applyKnowledge, cleanKnowledge, cleanKnowledgeEvents, projectKnowledge } from './knowledge';
 import { renameNpcReference } from './npcNetwork';
 import type { BaibaiMemory, CharacterMilestoneAdd, CharacterMilestoneUpdate, ItemDelta, ItemLogEntry, JsonValue, LeafExtra, LifeDetailAdd, LifeDetailUpdate, MemCharacterMilestone, MemLifeDetail, MemNpc, MemPlan, MemScene, MemSummary, NpcAffinity, NpcDelta, NpcPresence, PlanResolveItem, ProtagonistDelta, SceneDelta, SceneFocus, SceneOp, SceneReparent, StoredDelta, SummaryDelta, VarOp, VarTemplate, VarTier } from './types';
 
@@ -401,6 +401,8 @@ function cleanStoredDelta(raw: StoredDelta): StoredDelta {
 
   const knowledge = cleanKnowledge(raw.knowledge);
   if (knowledge.upsert?.length || knowledge.remove?.length) out.knowledge = knowledge;
+  const knowledgeEvents = cleanKnowledgeEvents(raw.knowledgeEvents);
+  if (knowledgeEvents.length) out.knowledgeEvents = knowledgeEvents;
 
   if (isRecord(raw.plans)) {
     const plans: NonNullable<StoredDelta['plans']> = {};
@@ -1392,6 +1394,7 @@ function applyStoredDeltaTo(mem: BaibaiMemory, d: StoredDelta, leaf: { id: strin
   }
 
   applyKnowledge(mem.knowledge, d.knowledge);
+  if (d.knowledgeEvents?.length) mem.knowledgeEvents.push(...d.knowledgeEvents);
 
   // 计划 / 悬念
   if (d.plans) {
@@ -1530,11 +1533,11 @@ function applyStoredDeltaTo(mem: BaibaiMemory, d: StoredDelta, leaf: { id: strin
 export function deriveMemory(
   chat: STMessage[] | null,
   upToExclusive?: number,
-): Pick<BaibaiMemory, 'state' | 'protagonist' | 'items' | 'plans' | 'scenes' | 'npcs' | 'knowledge' | 'itemLog' | 'lifeDetails' | 'characterMilestones' | 'vars'> {
+): Pick<BaibaiMemory, 'state' | 'protagonist' | 'items' | 'plans' | 'scenes' | 'npcs' | 'knowledge' | 'knowledgeEvents' | 'itemLog' | 'lifeDetails' | 'characterMilestones' | 'vars'> {
   const mem = createEmptyMemory();
   // 变量从三层合并模板起算(无 chat 也返回初始状态);seed 时展开模板里的 ST 宏({{user}} 等)
   mem.vars = expandVarMacros(mergeTemplates(memory.varTemplates));
-  if (!chat) return { state: mem.state, protagonist: mem.protagonist, items: mem.items, plans: mem.plans, scenes: mem.scenes, npcs: mem.npcs, knowledge: mem.knowledge, itemLog: mem.itemLog, lifeDetails: mem.lifeDetails, characterMilestones: mem.characterMilestones, vars: mem.vars };
+  if (!chat) return { state: mem.state, protagonist: mem.protagonist, items: mem.items, plans: mem.plans, scenes: mem.scenes, npcs: mem.npcs, knowledge: mem.knowledge, knowledgeEvents: mem.knowledgeEvents, itemLog: mem.itemLog, lifeDetails: mem.lifeDetails, characterMilestones: mem.characterMilestones, vars: mem.vars };
   const end = typeof upToExclusive === 'number' ? Math.min(upToExclusive, chat.length) : chat.length;
   for (let i = 0; i < end; i++) {
     if (chat[i]?.extra?.bbs_omit) continue; // 番外楼:不参与派生重放
@@ -1546,7 +1549,10 @@ export function deriveMemory(
   }
   // 只留最近若干条变动(注入/喂模型够用即可,省 token)
   if (mem.itemLog.length > ITEM_LOG_KEEP) mem.itemLog = mem.itemLog.slice(-ITEM_LOG_KEEP);
-  return { state: mem.state, protagonist: mem.protagonist, items: mem.items, plans: mem.plans, scenes: mem.scenes, npcs: mem.npcs, knowledge: mem.knowledge, itemLog: mem.itemLog, lifeDetails: mem.lifeDetails, characterMilestones: mem.characterMilestones, vars: mem.vars };
+  const ctx = getContext();
+  const roster = [ctx?.name1, ctx?.name2, ...mem.npcs.map(n => n.name)].filter((name): name is string => !!name?.trim());
+  mem.knowledge = projectKnowledge(mem.knowledgeEvents, roster, mem.knowledge);
+  return { state: mem.state, protagonist: mem.protagonist, items: mem.items, plans: mem.plans, scenes: mem.scenes, npcs: mem.npcs, knowledge: mem.knowledge, knowledgeEvents: mem.knowledgeEvents, itemLog: mem.itemLog, lifeDetails: mem.lifeDetails, characterMilestones: mem.characterMilestones, vars: mem.vars };
 }
 
 /** 变动日志保留的最近条数(注入与喂摘要共用)。 */

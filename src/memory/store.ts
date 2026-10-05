@@ -71,6 +71,7 @@ export function recomputeDerived(): void {
   memory.scenes.splice(0, memory.scenes.length, ...d.scenes);
   memory.npcs.splice(0, memory.npcs.length, ...d.npcs);
   memory.knowledge.splice(0, memory.knowledge.length, ...d.knowledge);
+  memory.knowledgeEvents.splice(0, memory.knowledgeEvents.length, ...d.knowledgeEvents);
   memory.itemLog.splice(0, memory.itemLog.length, ...d.itemLog);
   memory.lifeDetails.splice(0, memory.lifeDetails.length, ...d.lifeDetails);
   memory.characterMilestones.splice(0, memory.characterMilestones.length, ...d.characterMilestones);

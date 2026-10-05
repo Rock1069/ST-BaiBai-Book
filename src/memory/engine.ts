@@ -13,7 +13,7 @@ import { buildBatchSummaryPrompt, buildBatchThinking, buildCharCardSystem, build
 import { clampToTimeTags, cleanBody, parseTimeRange, syncTimeTagRegex, writeItemLogTag, writeVarLogTag } from './timeTag';
 import { renderSourceHints, type SourceExcerpt } from './sourceHints';
 import { memory, recomputeDerived, scheduleLeafFlush } from './store';
-import { groundedKnowledge, formatKnowledge } from './knowledge';
+import { formatKnowledge, groundedKnowledgeEvents } from './knowledge';
 import type { LeafExtra, SummaryDelta } from './types';
 import { scheduleVectorIndex } from './vector';
 import { invalidateRecallCache } from './vector/cache';
@@ -1119,12 +1119,12 @@ function applyLeafForFloor(
   const timeStart = tag.start || llmOptionalScalar(delta.timeStart) || undefined;
   const timeEnd = tag.end || llmOptionalScalar(delta.timeEnd) || llmOptionalScalar(delta.time) || undefined;
   const leafId = replaceLeaf?.id ?? makeLeafId();
-  const grounded = groundedKnowledge(delta.knowledge, sourceContent, knowledgeRoster, {
+  const grounded = groundedKnowledgeEvents(delta.knowledgeEvents, sourceContent, knowledgeRoster, {
     prior: stateBefore.knowledge,
     sceneParticipants: delta.sceneFocus?.participants ?? stateBefore.state.sceneFocus?.participants,
     leafId, floor: aiFloor, time: timeEnd || timeStart,
   });
-  if (grounded.upsert?.length || grounded.remove?.length) storedDelta.knowledge = grounded;
+  if (grounded.length) storedDelta.knowledgeEvents = grounded;
   // 状态当前时间(覆盖型):用结束时间(本段最后时刻);取不到则保留既有状态。
   if (timeEnd) storedDelta.time = timeEnd;
   const weatherElapsed = groundedWeatherElapsed(delta.weather, sourceContent);

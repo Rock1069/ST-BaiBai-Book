@@ -131,7 +131,7 @@ function appendDraft() {
   <section class="plot-page">
     <header>
       <h2 class="bbs-title bbs-title-sub"><Icon name="plot" /> 剧情推进</h2>
-      <p>把已有记忆与本轮行动串起来，为下一段故事提供方向。推演建议不会写入事实台账。</p>
+      <p>自动从未了结计划、悬念与当前场景挑选下一步，参考相关摘要、总结和近期正文。推演建议不会写入事实台账。</p>
     </header>
     <p v-if="!plot.available" class="notice">请先打开一个聊天，再配置或使用剧情推进。</p>
     <div v-if="plot.data.delivery" class="panel" role="status">
@@ -147,7 +147,7 @@ function appendDraft() {
       <label>剧情推进预设
         <BbsSelect :model-value="plot.data.settings.presetName" :options="presetOptions" aria-label="剧情推进预设" @update:model-value="selectPlotPreset" />
       </label>
-      <p class="hint">可导入数据库本体导出的 JSON（单个对象或数组）。选中的预设会由下方推演 API 按任务顺序执行；预设库跨聊天保存，当前选择随聊天保存。</p>
+      <p class="hint">内置模式会自动挑选下一情节点，使用精简上下文完成一次推演。也可导入数据库本体的 JSON 预设；选中预设时按其任务顺序执行，可能需要多次模型调用。预设库跨聊天保存，当前选择随聊天保存。</p>
       <p class="hint">依赖原脚本专属表格、Agent 世界书控制或其他插件变量的预设，可导入保存，但这些能力无法在柏宝书中执行；请先手动推演一次检查结果。</p>
       <div class="actions">
         <input ref="presetFile" class="file-input" type="file" accept=".json,application/json" aria-label="选择剧情推进预设 JSON" @change="onPresetFile" />

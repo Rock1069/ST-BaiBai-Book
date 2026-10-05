@@ -11,6 +11,7 @@ import { cleanBody, stripThinkBlocks } from '@/memory/timeTag';
 import { prepareWeather } from '@/weather/store';
 import { refreshPlotMessageCards } from '@/plotMessageCards';
 import { buildPlotMessages, normalizePlotData, normalizePlotTurnPlan, plotEligible, plotInjection, PLOT_KEY, PLOT_PROMPT_KEY, shouldRunPlot, type PlotTurnPlan } from './model';
+import { plotBeatCandidates, selectPlotHistory } from './architecture';
 import { activePlotTasks, currentPlotPreset, exportPlotPreset, extractTaskOutput, parsePlotPresets, recalledDetails, renderPresetMessages, type PlotMaterials, type PlotPreset } from './presets';
 
 export const plot = reactive({ data: normalizePlotData(null), busy: false, autoBusy: false, phase: '', error: '', result: '', queued: false, available: false });
@@ -249,7 +250,7 @@ export async function generatePlot(input = plot.data.draft, weatherPrepared = fa
     if (settings.channelId && !channel) throw new Error('所选 API 渠道已删除，请重新选择');
     const recent = ctx.chat.map((m, i) => ({ m, i })).filter(({ m }) => plotEligible(m)).slice(-settings.contextCount);
     const historyNodes = selectHistoryNodesBefore(memory.summaries, ctx.chat, ctx.chat.length);
-    const history = renderHistoryNodes(historyNodes.filter(n => n.msgIndex < (recent[0]?.i ?? ctx.chat.length)));
+    const priorNodes = historyNodes.filter(n => n.msgIndex < (recent[0]?.i ?? ctx.chat.length));
     const knowledge = formatKnowledge(memory.knowledge);
     const stateBriefing = buildStateInjectionText();
     const state = [stateBriefing, knowledge && !stateBriefing.includes(knowledge) ? knowledge : ''].filter(Boolean).join('\n\n');
@@ -271,6 +272,7 @@ export async function generatePlot(input = plot.data.draft, weatherPrepared = fa
       abortable(channel ? requestCompletion(channel, messages, { signal: ctrl.signal }) : requestViaMainApi(messages), ctrl.signal);
     let raw: string;
     if (preset) {
+      const history = renderHistoryNodes(priorNodes);
       const indexed = historyNodes.slice(-120).map((node, i) => ({ code: `AM${String(i + 1).padStart(4, '0')}`, text: node.text.slice(0, 2200) }));
       const materials: PlotMaterials = { input, recent: recentText, history, state, knowledge, encounter, realism: settings.realism, world, card: charCard, persona, indexed };
       let previous = '';
@@ -292,7 +294,9 @@ export async function generatePlot(input = plot.data.draft, weatherPrepared = fa
       raw = [...taskResults, ...recalled.map(details => `【已召回的实际记忆】\n${details}`)].join('\n\n');
     } else {
       plot.phase = '正在推演…';
-      const messages = buildPlotMessages(settings, input, recentText, history, state, [card, world].filter(Boolean).join('\n\n'), encounter);
+      const history = renderHistoryNodes(selectPlotHistory(priorNodes, input, memory.plans));
+      const candidates = plotBeatCandidates(memory.plans, input, recentText);
+      const messages = buildPlotMessages(settings, input, recentText, history, state, [card, world].filter(Boolean).join('\n\n'), encounter, candidates);
       raw = await request(messages);
     }
     if (!current()) return null;

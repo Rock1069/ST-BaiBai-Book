@@ -12,7 +12,7 @@ const sections = [
   { status: 'known', label: '确知', description: '亲历或得到可靠确认' },
   { status: 'heard', label: '听说', description: '听到了消息，但尚未亲自确认' },
   { status: 'suspected', label: '怀疑', description: '有线索或猜测，不能当成事实' },
-  { status: 'unknown', label: '明确不知', description: '正文确认此人未目睹、未听到或未获告知' },
+  { status: 'unknown', label: '未接触', description: '私密事件未接触，且尚无传播记录；旧聊天也可能有明确不知记录' },
 ] as const;
 
 const available = computed(() => {
@@ -53,14 +53,14 @@ function factOrigin(fact: KnowledgeFact): string {
 
 <template>
   <details class="knowledge-panel">
-    <summary class="knowledge-summary"><Icon name="knowledge" /> 角色认知记录（{{ memory.knowledge.length }} 条 · {{ keyFactCount }} 件事实）</summary>
+    <summary class="knowledge-summary"><Icon name="knowledge" /> 角色认知账本（{{ memory.knowledgeEvents.length }} 条正文事件 · {{ keyFactCount }} 件事实）</summary>
     <div class="knowledge-body">
-    <p class="intro">按“事实 × 角色”查看确知、听说、怀疑或明确不知。推演草案不会直接记为已发生的认知。</p>
+    <p class="intro">正文事件和实际传播路径是记录来源，下方按角色显示推导出的认知。推演草案不会入账。</p>
     <p v-if="!available" class="notice">请先打开一个聊天。</p>
     <template v-else>
       <div class="notice">
         <strong>记录边界</strong>
-        <p>认知台账独立记录每个角色对事实的状态；摘要叙述不会自动让其他角色知情。私密事件会为参与者和未获知的在册角色分别记账。没有记录不等于角色明确不知道；世界书、角色卡和推演草案也不会自动变成角色知识。旧聊天若未重新摘要，早期认知可能尚无记录。</p>
+        <p>每条新事件只记录正文证据、实际知情者和传播方式；私密事件外的角色由此推导为未接触，无须逐人填表。知道会面不等于知道谈话内容。没有记录表示尚无可靠证据；摘要、世界书和推演不会自动让角色知情。旧聊天的逐人记录仍会显示。</p>
       </div>
 
       <div class="overview" aria-label="认知状态统计">

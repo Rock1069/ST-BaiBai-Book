@@ -430,7 +430,7 @@ const SUMMARY_INPUT = `【主角】{{user}}  【角色】{{char}}
 {{milestones_block}}
 - 角色认知(本楼之前;未列出的秘密不能推定为角色已知):
 {{knowledge_block}}
-- 角色认知记账名册(使用准确姓名逐人记账;新登场且本轮出现的人物也可按正文记录):
+- 角色名册(仅供校验事件的实际知情者姓名；不要逐人生成“不知道”记录):
 {{knowledge_actors_block}}
 - 未了结的计划/悬念(用编号 p1、p2… 指代):
 {{plans_block}}
@@ -476,7 +476,7 @@ ${RULE_LONGTERM_DB}
     "update": [{ "name": "已有NPC名", "gender": "补填性别(可选)", "age": "补填或正文明确纠正后的年龄(可选,勿按时间流逝自行换算)", "relation": "质变后的新关系(可选,称谓在前;仅限明确说出/约定/无歧义客观事件,吵架冷战不算)", "ties": "更新后的完整人际关系(可选,整体覆盖)", "affinityInner": "可选:五档整数-2/-1/0/1/2或null,不变省略", "affinityOuter": "可选:独立五档整数或null,不变省略", "affinityNote": "可选:稳定的一句依据/表现说明,不变省略", "title": "新身份(可选)", "desc": "新固定外貌(可选)", "personality": "新性格(可选)", "outfit": "换装后的当前着装(可选;空字符串=清空)", "condition": "变化后的状态(可选;痊愈/恢复正常填空字符串清空)", "important": "升/降主要角色true/false(可选)", "location": "新所在地(可选;离场去向未明填空字符串=所在不明,不要保留旧地点;随行时不要写)", "follow": "随行true/离队false(可选;离队要显式写 false,空 location 不能代替)" }],
     "remove": ["永久退场的已有NPC名"]
   },
-  "knowledge": { "upsert": [{ "actor": "按认知记账名册填写的准确角色名", "factId": "已有事实的 kf: 编号(复用时填;新事实省略)", "fact": "剧情关键事实(同一事实沿用原措辞)", "status": "known|heard|suspected|unknown", "source": "亲历/亲眼见到/谁告知/明确未获知等具体路径", "evidence": "本轮对话中连续的逐字原句(至少4字)" }], "remove": [{ "actor": "角色姓名", "factId": "已有事实编号(可选)", "fact": "需要撤销的旧事实原文", "evidence": "本轮对话中推翻旧认知的逐字原句" }] },
+  "knowledgeEvents": [{ "kind": "event|transmission", "factId": "传播已有事实时复用上方 kf: 编号；新事实省略", "fact": "会影响后续行动的具体事实", "audience": ["实际亲历、看到或听到此信息的角色姓名"], "visibility": "private|open|unclear", "mode": "known|heard|suspected", "source": "亲历、目睹、谁告知或何处听闻", "evidence": "本轮正文中连续的逐字原句(至少4字)" }],
   "plans": {
     "add": [{ "kind": "plan", "content": "新出现的计划/目标", "createdTime": "立计划时的故事内时间", "targetTime": "打算完成的目标时间(见下)" }, { "kind": "suspense", "content": "正文明确留下的待揭晓事实,或已经启动且等待结果的外部事件", "createdTime": "悬念出现时的故事内时间" }],
     "resolve": [{ "id": "p1", "outcome": "done|cancelled|failed", "reason": "一句话:为什么/如何了结(见下方【核销/了结】)" }]
@@ -495,7 +495,7 @@ ${RULE_NPCS}
 
 ${RULE_CHARACTER_MILESTONES}
 
-【角色认知规则】knowledge 是独立的“事实 × 角色”认知台账；summary 是读者视角叙述，绝不能用 summary、历史摘要或读者看见的事实推断角色知道或不知道。只根据【本轮对话】实际正文及明确的信息传播路径记账，不把世界书、角色卡、摘要基线、推演建议当成本轮证据。只记录后续会影响人物行动的关键事实，不把普通对话逐句入账。上方旧认知带有 [kf:编号]：同一事实后续被告知、听说、查证或撤销时，复制该 factId 与原 fact；新事实省略 factId，同一新事实涉及多人时给所有人填写完全相同的 fact。编号由程序分配，禁止自造。逐一确定谁参与、亲眼看到、听到或被告知：参与或可靠确认者为 known；传闻为 heard；有线索的猜测为 suspected。对正文明确为私密的事件，或局势卡和本轮正文共同显示只有两名参与者的室内谈话（包括私密亲密行为），给每位参与者记录 known，并给【角色认知记账名册】中其他未目睹、未听到、未获告知者逐一记录 unknown；不要只写参与者而漏掉明确不知者，也不要把未提及的陌生人扩成名册。普通公开场景里，仅仅未提及某人不等于 unknown。正文直接写明某人不知道时也记录 unknown。角色关于他人过往事件的发问、揣测或指控只能证明其发问，不能据此写为亲历或确知；旧 unknown 升级为 heard/known 必须有本轮正文中的新传播或查证路径。正文明确推翻事实则 remove。每条 evidence 必须是【本轮对话】连续逐字片段，优先引用事件/传播/私密场景原句；无原句不写。每条 source 简述具体路径。一个私密事件可能需要为多名角色分别记录，因此最多可输出 64 条变化。
+【角色认知事件规则】knowledgeEvents 是正文事实和传播事件日志，不是逐角色填表。summary 是读者视角，绝不能据摘要、世界书、角色卡、推演建议或旁白的全知视角推断角色知情。只从【本轮对话】已经发生的正文提取关键事件，每件事实只写一条 event；audience 仅列实际参与、目睹、听到内容或被明确告知的角色。私密事件且正文明确排除旁人时 visibility=private；其他角色不用逐一写 unknown，程序会从私密场景和传播路径推导边界。公开场景也不能自动让全部名册角色知情。事件发生与谈话具体内容是不同事实：旁人知道两人见面，不等于听到谈话。已有事实后来被告知、偷听、查证时，写 transmission 并复用旧 factId 和原 fact；只有正文写出明确传播路径才可传递。传闻 mode=heard；有线索的推测 mode=suspected；可靠亲历/确认才为 known。角色的发问或指控不能证明其亲历。每条 evidence 必须是本轮正文中连续逐字片段；无原句不写。不要编造传播、旁听者或未出现的事实。
 
 ${RULE_PLANS}
 
@@ -1185,7 +1185,7 @@ export function buildSummaryPrompt(a: BuildArgs): { system: string; user: string
   }
   const prompt = fill(custom, macros);
   const supplements = [PROTAGONIST_PROTOCOL_SUPPLEMENT, RULE_ABSOLUTE_TIME_LANGUAGE, SCENE_FOCUS_PROTOCOL_SUPPLEMENT,
-    '【角色认知增量协议】最终 JSON 可含 knowledge:{upsert:[{actor,factId?,fact,status,source,evidence}],remove:[{actor,factId?,fact,evidence}]}。只记录后续会影响人物行动的关键事实。已有事实复用【角色认知】中的 [kf:编号] 和原 fact，新事实省略 factId、同一新事实为各角色使用完全相同的 fact；编号由程序分配，禁止自造。这是独立的事实×角色台账，严禁从摘要叙述推断认知；仅依据本轮正文与实际传播路径。status 只能是 known/heard/suspected/unknown。私密事件及本轮正文与局势卡共同显示的两人室内谈话，需为参与者记 known，并为名单中未目睹、未听到、未获告知的其他在册角色逐人记 unknown；须引用正文中的事件/场景原句。普通公开场景里仅未提及不等于 unknown。角色对他人过往事件的发问或指控不能证明其亲历或确知；旧 unknown 升级须有本轮正文的新传播或查证路径。evidence 必须是本轮对话连续逐字原句(至少4字),无证据不写。旁白、世界书、角色卡及推演草案不能作为知情来源。传闻与怀疑不得写成确知。'];
+    '【角色认知事件协议】最终 JSON 可含 knowledgeEvents:[{kind:"event|transmission",factId?,fact,audience:["实际获知者"],visibility:"private|open|unclear",mode:"known|heard|suspected",source,evidence}]。只提取会影响后续行动的事实，每件新事实只写一条 event；同一事实传播时写 transmission 并复用已有 [kf:编号] 和原 fact。audience 只列本轮正文明确亲历、看到、听到或获告知的人，不逐人写 unknown。私密事件 visibility=private 需有正文排除旁人的证据；未在场者无传播路径不可知。事件发生和密谈内容分开记录。evidence 必须是本轮正文连续逐字原句(至少4字)，无证据不写。角色发问不能证明其亲历；摘要、世界书、角色卡和推演草案不是知情来源。'];
   supplements.push(LIFE_DETAILS_PROTOCOL_SUPPLEMENT);
   supplements.push(CHARACTER_MILESTONES_PROTOCOL_SUPPLEMENT);
   supplements.push(NPC_NETWORK_PROTOCOL_SUPPLEMENT);
@@ -1203,7 +1203,7 @@ export function buildSummaryPrompt(a: BuildArgs): { system: string; user: string
     user: `${prompt}\n\n【主角当前档案(本轮之前,只读参考)】\n${macros.protagonist_block}`
       + (prompt.includes(macros.npcs_block) ? '' : `\n\n【已登场NPC(本轮之前,好感估计只作基线,不重复结算)】\n${macros.npcs_block}`)
       + (prompt.includes(macros.knowledge_block) ? '' : `\n\n【角色认知(本轮之前)】\n${macros.knowledge_block}`)
-      + (prompt.includes(macros.knowledge_actors_block) ? '' : `\n\n【角色认知记账名册】\n${macros.knowledge_actors_block}`)
+      + (prompt.includes(macros.knowledge_actors_block) ? '' : `\n\n【角色名册（只用于校验实际知情者姓名）】\n${macros.knowledge_actors_block}`)
       + (prompt.includes(macros.milestones_block.trim()) ? '' : `\n\n【主要角色经历时间线(本轮之前)】\n${macros.milestones_block}`)
       + (prompt.includes(macros.lifedetails_block.trim()) ? '' : `\n\n${macros.lifedetails_block}`),
   };
@@ -1411,7 +1411,7 @@ ${SUMMARY_OUTPUT_PROTOCOL}
    - 主要角色盘点:有角色已成为**反复出场的核心主演**吗?→ important:true(只标真正主演,别滥标)。名册里 ★ 标记的,重点确认其 outfit/location/condition 是否要刷新。
    - 离场演变(仅限★主要角色):名册里某★主要角色与主角已分开**明显跨越时间**(数日/长旅程)后又出现或被提及?→ 可合理推演并 update 其 outfit/location/condition(多日多半已换装/已移动/伤已变化),避免「重逢还穿老样子」。**仅限主要角色这三个字段,不可外溢到正文/物品/配角。**
    - 有 NPC 永久退场/死亡才 remove;暂时分开不 remove。
-   - knowledge:按事实逐人核对参与/目睹/听到/获告知路径；私密事件还要为名单内未接触此事的角色逐一记 unknown。只引用本轮正文原句，不从 summary 推断，推演不算。
+   - knowledgeEvents:按关键事件记录正文原句、实际知情者和传播路径；私密事件只列知情者，不逐人填 unknown。事件发生与谈话内容分开，不从 summary 推断，推演不算。
 
 3. 悬念簿清算(分两步,先计划后悬念)
    - 列出【未了结的计划/悬念】里所有"计划"条目,逐条判断:当前时间是否已越过截止?是否被执行/取消?需了结的记下其编号,准备 plans.resolve 并**标好 outcome + 一句 reason**。
