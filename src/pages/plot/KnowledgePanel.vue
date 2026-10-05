@@ -4,10 +4,11 @@ import BbsSelect from '@/components/BbsSelect.vue';
 import Icon from '@/components/Icon.vue';
 import { memory, derivedMeta } from '@/memory/store';
 import { leafValid } from '@/memory/apply';
-import type { KnowledgeFact } from '@/memory/types';
+import type { KnowledgeEvent, KnowledgeFact } from '@/memory/types';
 import { getContext } from '@/st/context';
 
 const selectedActor = ref('');
+const view = ref<'events' | 'actors'>('events');
 const sections = [
   { status: 'known', label: '确知', description: '亲历或得到可靠确认' },
   { status: 'heard', label: '听说', description: '听到了消息，但尚未亲自确认' },
@@ -42,6 +43,18 @@ const factsFor = (actor: string, status: KnowledgeFact['status']): KnowledgeFact
   memory.knowledge.filter(f => f.actor === actor && f.status === status);
 const actorCount = (actor: string): number => memory.knowledge.filter(f => f.actor === actor).length;
 const keyFactCount = computed(() => new Set(memory.knowledge.map(f => f.factId || f.fact)).size);
+const unexposedActors = (event: KnowledgeEvent): string[] => memory.knowledge
+  .filter(fact => fact.factId === event.factId && fact.status === 'unknown').map(fact => fact.actor);
+const visibleEvents = computed(() => memory.knowledgeEvents
+  .filter(event => !selectedActor.value || event.audience.includes(selectedActor.value)
+    || (event.visibility === 'private' && unexposedActors(event).includes(selectedActor.value)))
+  .slice(-30).reverse());
+function eventLocation(event: KnowledgeEvent): string {
+  const floor = getContext()?.chat?.findIndex(m => leafValid(m) && m.extra?.bbs_leaf?.id === event.leafId) ?? -1;
+  const label = floor >= 0 ? `来源楼 #${floor}`
+    : event.floor !== undefined ? `原始来源楼 #${event.floor}` : '来源楼已不在当前聊天';
+  return `${label}${event.time ? ` · 故事时间：${event.time}` : ''}`;
+}
 function factOrigin(fact: KnowledgeFact): string {
   if (!fact.origin) return '';
   const floor = getContext()?.chat?.findIndex(m => leafValid(m) && m.extra?.bbs_leaf?.id === fact.origin?.leafId) ?? -1;
@@ -69,12 +82,37 @@ function factOrigin(fact: KnowledgeFact): string {
         </div>
       </div>
 
+      <div class="view-switch" role="group" aria-label="认知账本查看方式">
+        <button type="button" :class="{ active: view === 'events' }" :aria-pressed="view === 'events'" @click="view = 'events'">正文事件（{{ memory.knowledgeEvents.length }}）</button>
+        <button type="button" :class="{ active: view === 'actors' }" :aria-pressed="view === 'actors'" @click="view = 'actors'">角色视角（{{ memory.knowledge.length }}）</button>
+      </div>
+
       <div class="filter">
         <span>查看人物</span>
         <BbsSelect v-model="selectedActor" :options="options" aria-label="选择角色认知" />
       </div>
 
-      <p v-if="!actors.length" class="empty">暂无角色。生成正文并完成摘要后，认知变化会出现在这里。</p>
+      <template v-if="view === 'events'">
+        <p v-if="!visibleEvents.length" class="empty">{{ memory.knowledgeEvents.length ? '当前筛选下没有正文事件。' : '暂无新架构的正文事件。新正文完成逐楼摘要后会出现；旧聊天的记录可切到“角色视角”查看。' }}</p>
+        <div v-else class="event-list">
+          <details v-for="event in visibleEvents" :key="event.id" class="event-card">
+            <summary class="event-summary">
+              <span class="event-badge">{{ event.kind === 'transmission' ? '信息传播' : '正文事件' }}</span>
+              <strong>{{ event.fact }}</strong>
+              <small>{{ event.audience.join('、') }} · {{ event.visibility === 'private' ? '私密' : event.visibility === 'open' ? '公开场景' : '场景未定' }}</small>
+            </summary>
+            <div class="event-detail">
+              <p><b>实际获知：</b>{{ event.audience.join('、') }}（{{ event.mode === 'known' ? '确知' : event.mode === 'heard' ? '听说' : '怀疑' }}）</p>
+              <p v-if="event.visibility === 'private' && unexposedActors(event).length"><b>尚无传播路径：</b>{{ unexposedActors(event).join('、') }}</p>
+              <p><b>获知路径：</b>{{ event.source }}</p>
+              <p><b>正文依据：</b>{{ eventLocation(event) }}</p>
+              <blockquote>{{ event.evidence }}</blockquote>
+              <small>事实编号：{{ event.factId }}</small>
+            </div>
+          </details>
+        </div>
+      </template>
+      <p v-else-if="!actors.length" class="empty">暂无角色。生成正文并完成摘要后，认知变化会出现在这里。</p>
       <div v-else class="actors">
         <article v-for="actor in visibleActors" :key="actor" class="actor-card">
           <div class="actor-heading">
@@ -113,6 +151,20 @@ function factOrigin(fact: KnowledgeFact): string {
 .notice { padding: 12px 14px; border-left: 3px solid var(--bbs-accent); background: var(--bbs-surface-2); border-radius: var(--bbs-radius-sm); }
 .notice p { margin: 5px 0 0; }
 .overview { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.view-switch { display: flex; gap: 6px; padding: 4px; border: 1px solid var(--bbs-line); border-radius: var(--bbs-radius-sm); background: var(--bbs-bg); }
+.view-switch button { flex: 1; min-width: 0; padding: 7px 8px; border: 0; border-radius: var(--bbs-radius-sm); background: transparent; color: var(--bbs-ink-muted); font: inherit; font-size: 12px; cursor: pointer; }
+.view-switch button.active { background: var(--bbs-surface); color: var(--bbs-ink); font-weight: 600; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+.event-list { display: grid; gap: 8px; }
+.event-card { min-width: 0; border: 1px solid var(--bbs-line); border-radius: var(--bbs-radius-sm); background: var(--bbs-bg); overflow-wrap: anywhere; }
+.event-summary { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: 4px 9px; padding: 10px 12px; cursor: pointer; }
+.event-summary strong { font-size: 13px; line-height: 1.5; }
+.event-summary small { grid-column: 2; color: var(--bbs-ink-muted); font-size: 11px; }
+.event-badge { display: inline-block; padding: 3px 7px; border-radius: 999px; background: var(--bbs-surface-2); color: var(--bbs-accent); font-size: 11px; white-space: nowrap; }
+.event-detail { padding: 0 12px 12px; border-top: 1px solid var(--bbs-line); font-size: 12px; line-height: 1.6; }
+.event-detail p { margin: 8px 0 0; }
+.event-detail b { color: var(--bbs-ink-muted); font-weight: 500; }
+.event-detail blockquote { margin: 9px 0; padding: 8px 10px; border-left: 3px solid var(--bbs-accent); background: var(--bbs-surface); }
+.event-detail small { color: var(--bbs-ink-muted); }
 .metric { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; padding: 10px 12px; border: 1px solid var(--bbs-line); border-radius: var(--bbs-radius-sm); background: var(--bbs-surface); font-size: 12px; }
 .metric strong { font-size: 18px; color: var(--bbs-ink); }
 .filter { display: grid; gap: 6px; max-width: 360px; font-size: 13px; }

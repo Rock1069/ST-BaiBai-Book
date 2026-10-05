@@ -3,10 +3,13 @@ import { computed, ref } from 'vue';
 import BbsSelect from '@/components/BbsSelect.vue';
 import Icon from '@/components/Icon.vue';
 import { apiSettings } from '@/api/settings';
-import { DEFAULT_PLOT_PROMPT } from '@/plot/model';
+import { DEFAULT_PLOT_PROMPT, extractPlotSection, plotEligible } from '@/plot/model';
+import { listPlotBeatOptions } from '@/plot/architecture';
 import KnowledgePanel from './KnowledgePanel.vue';
+import { memory, derivedMeta } from '@/memory/store';
+import { cleanBody } from '@/memory/timeTag';
 import { cancelPlot, exportSelectedPlotPreset, generatePlot, importPlotPresetText, plot, plotPresets, queuePlot, removeSelectedPlotPreset, saveCurrentPlotPreset, selectPlotPreset, unqueuePlot } from '@/plot/store';
-import { appendChatInput, listWorldInfoEntries, type WorldInfoCatalogEntry } from '@/st/context';
+import { appendChatInput, getContext, listWorldInfoEntries, type WorldInfoCatalogEntry } from '@/st/context';
 import { toast } from '@/st/toast';
 import { closeBook } from '@/state/ui';
 
@@ -25,6 +28,14 @@ const presetOptions = computed(() => [
 const newPresetName = ref('');
 const presetFile = ref<HTMLInputElement | null>(null);
 const presetMessage = ref('');
+const beatOptions = computed(() => {
+  void derivedMeta.rev;
+  const recent = (getContext()?.chat ?? []).filter(plotEligible).slice(-plot.data.settings.contextCount)
+    .map(message => `${message.name}: ${cleanBody(message.mes)}`).join('\n\n');
+  return listPlotBeatOptions(memory.plans, plot.data.draft, recent);
+});
+const selectedBeat = computed(() => extractPlotSection(plot.result, '选定情节点'));
+const selectedAction = computed(() => extractPlotSection(plot.result, '下一段行动'));
 const encounterCatalog = ref<WorldInfoCatalogEntry[]>([]);
 const encounterLoading = ref(false);
 const encounterLoaded = ref(false);
@@ -133,6 +144,26 @@ function appendDraft() {
       <h2 class="bbs-title bbs-title-sub"><Icon name="plot" /> 剧情推进</h2>
       <p>自动从未了结计划、悬念与当前场景挑选下一步，参考相关摘要、总结和近期正文。推演建议不会写入事实台账。</p>
     </header>
+    <section v-if="plot.available" class="panel beat-panel" aria-label="剧情推进架构">
+      <div class="beat-heading">
+        <div><strong>下一情节点</strong><p class="hint">{{ plot.data.settings.presetName ? '当前使用导入的多阶段预设' : '内置架构 · 根据已发生剧情自动挑选' }}</p></div>
+        <span class="beat-mode">{{ plot.data.settings.presetName ? '预设模式' : '自动选择' }}</span>
+      </div>
+      <template v-if="!plot.data.settings.presetName">
+        <p class="hint">候选来自尚未了结的计划、悬念和当前场景；这里只预览，不需要手动点选。正式推演以发送时的用户消息和最新正文为准。</p>
+        <ol class="beat-list">
+          <li v-for="option in beatOptions" :key="option.id" class="beat-option">
+            <span class="beat-kind">{{ option.kind === 'scene' ? '场景延续' : option.kind === 'suspense' ? '悬念' : '计划' }}</span>
+            <span>{{ option.content }}<small v-if="option.targetTime">目标时间：{{ option.targetTime }}</small></span>
+          </li>
+        </ol>
+        <div v-if="selectedBeat" class="beat-selected" role="status">
+          <strong>上次选定</strong><p>{{ selectedBeat }}</p>
+          <details v-if="selectedAction"><summary>查看下一段行动</summary><p>{{ selectedAction }}</p></details>
+        </div>
+      </template>
+      <p v-else class="hint">导入预设仍按自身任务顺序推演。切换到“内置 / 当前自定义”即可使用自动情节点选择。</p>
+    </section>
     <p v-if="!plot.available" class="notice">请先打开一个聊天，再配置或使用剧情推进。</p>
     <div v-if="plot.data.delivery" class="panel" role="status">
       <strong>{{ plot.data.delivery.status === 'submitted' ? '上一轮已提交到正文的用户层' : '上一轮未提交推演建议' }}</strong>
@@ -249,6 +280,16 @@ function appendDraft() {
 header h2 { display: flex; align-items: center; gap: 8px; }
 header p, .hint { color: var(--bbs-ink-muted); font-size: 12px; margin: 6px 0; }
 .panel { min-width: 0; margin: 0; padding: 16px; border: 1px solid var(--bbs-line); border-radius: var(--bbs-radius-sm); background: var(--bbs-surface); }
+.beat-panel { display: grid; gap: 10px; }
+.beat-heading { display: flex; align-items: start; justify-content: space-between; gap: 12px; }
+.beat-heading strong { font-size: 15px; }
+.beat-mode, .beat-kind { display: inline-flex; align-items: center; width: fit-content; padding: 3px 8px; border-radius: 999px; background: var(--bbs-surface-2); color: var(--bbs-accent); font-size: 11px; white-space: nowrap; }
+.beat-list { display: grid; gap: 7px; margin: 0; padding: 0; list-style: none; }
+.beat-option { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: 9px; padding: 9px 10px; border: 1px solid var(--bbs-line); border-radius: var(--bbs-radius-sm); background: var(--bbs-bg); font-size: 12px; line-height: 1.55; overflow-wrap: anywhere; }
+.beat-option small { display: block; margin-top: 3px; color: var(--bbs-ink-muted); }
+.beat-selected { padding: 11px 13px; border-left: 3px solid var(--bbs-accent); border-radius: var(--bbs-radius-sm); background: var(--bbs-surface-2); font-size: 13px; overflow-wrap: anywhere; }
+.beat-selected p { margin: 5px 0; line-height: 1.6; }
+.beat-selected details { margin-top: 7px; }
 fieldset.panel, .panel > label { display: grid; gap: 10px; }
 label, .label { display: grid; gap: 6px; font-size: 13px; }
 .switch { display: flex; align-items: center; gap: 8px; }

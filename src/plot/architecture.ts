@@ -1,6 +1,13 @@
 import type { MemPlan } from '@/memory/types';
 import type { ViewNode } from '@/memory/inject';
 
+export interface PlotBeatOption {
+  id: string;
+  kind: 'plan' | 'suspense' | 'scene';
+  content: string;
+  targetTime?: string;
+}
+
 function terms(text: string): Set<string> {
   const value = text.toLocaleLowerCase();
   const words = value.match(/[\p{Script=Han}]{2,}|[\p{L}\p{N}]{3,}/gu) ?? [];
@@ -38,14 +45,21 @@ export function selectPlotHistory(nodes: readonly ViewNode[], input: string, pla
 }
 
 /** 用已落叶的开放计划/悬念构造候选；模型选下一步，用户无需逐项点选。 */
-export function plotBeatCandidates(plans: readonly MemPlan[], input: string, recent: string): string {
+export function listPlotBeatOptions(plans: readonly MemPlan[], input: string, recent: string): PlotBeatOption[] {
   const open = plans.filter(p => p.status === 'open');
   const query = terms(`${input} ${recent.slice(-2400)}`);
   const ranked = open.map((plan, index) => ({ plan, index,
     score: overlap(plan.content, query) * 4 + index / Math.max(open.length, 1) }));
   ranked.sort((a, b) => b.score - a.score);
-  const lines = ranked.slice(0, 6).map(({ plan }, index) =>
-    `${index + 1}. ${plan.kind === 'suspense' ? '待揭悬念' : '未完成计划'}：${plan.content.slice(0, 280)}${plan.targetTime ? `（目标时间：${plan.targetTime}）` : ''}`);
-  lines.push('当前场景自然延续：依据用户本轮行动、在场人物和最近正文推进一个可观察的变化。');
-  return lines.join('\n');
+  return [
+    ...ranked.slice(0, 6).map(({ plan }) => ({ id: plan.id, kind: plan.kind,
+      content: plan.content.slice(0, 280), targetTime: plan.targetTime })),
+    { id: 'scene', kind: 'scene', content: '依据用户本轮行动、在场人物和最近正文推进一个可观察的变化。' },
+  ];
+}
+
+export function plotBeatCandidates(plans: readonly MemPlan[], input: string, recent: string): string {
+  return listPlotBeatOptions(plans, input, recent).map((option, index) =>
+    `${index + 1}. ${option.kind === 'scene' ? '当前场景自然延续' : option.kind === 'suspense' ? '待揭悬念' : '未完成计划'}：${option.content}${option.targetTime ? `（目标时间：${option.targetTime}）` : ''}`)
+    .join('\n');
 }

@@ -8,6 +8,15 @@ export const DEFAULT_PLOT_PROMPT = `你是故事的剧情规划助手。依据�
 只规划下一小段能在正文里呈现的事件和人物反应，不替玩家做关键选择。严格区分已发生事实与未来建议，不虚构历史、不复活已了结悬念、不重复结算物品。角色只可使用其亲历或沿正文传播路径获得的信息；知道会面不等于知道密谈内容。世界书、角色卡和推演不是已发生事实。
 只输出简洁的【已发生的依据】【选定情节点】【下一段行动】【连续性约束】，不输出分析过程或完整正文。`;
 
+export function extractPlotSection(text: string, title: string): string {
+  const marker = `【${title}】`;
+  const start = text.indexOf(marker);
+  if (start < 0) return '';
+  const rest = text.slice(start + marker.length);
+  const next = rest.search(/【[^】\n]{2,24}】/);
+  return (next < 0 ? rest : rest.slice(0, next)).trim().slice(0, 900);
+}
+
 const AUTO_BEAT_RULES = '从候选情节点中自动选一个当前可执行的方向，必要时选择“当前场景自然延续”。仅选下一步，不同时铺开多条支线。候选是否成立以已发生正文、摘要/总结和当前状态为准；摘要提供读者连续性，不证明角色知情。建议必须说明哪位在场人物能做什么、触发条件是什么、玩家可如何回应；任何未在场角色不得凭空知悉私密谈话。';
 
 export interface PlotSettings {
