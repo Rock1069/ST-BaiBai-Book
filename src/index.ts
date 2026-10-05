@@ -13,6 +13,7 @@ import { injectMenuButton } from '@/menu';
 import { syncTopBarButton } from '@/topbar';
 import { syncQuickReplyButton } from '@/quickReply';
 import { bindFloorPanel } from '@/floorPanel';
+import { bindPlotMessageCards } from '@/plotMessageCards';
 import { registerPublicInterface } from '@/public/register';
 import { ui } from '@/state/ui';
 import { guardEditableArrowKeys } from '@/st/keyboard';
@@ -153,6 +154,7 @@ function bindMemoryWhenReady(attempt = 0) {
       refreshInjection();
       // 楼内摘要锚点:按设置开关注入(bindFloorPanel 内 watch 开关 + 主题,immediate 首次同步)
       bindFloorPanel();
+      bindPlotMessageCards();
       // 后台检测更新(实时比对本地/远端 manifest 版本;失败静默,不阻断启动)
       void checkForUpdate();
       console.log('[柏宝书] 启动链绑定完成');
