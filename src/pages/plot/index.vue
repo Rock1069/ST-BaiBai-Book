@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue';
 import BbsSelect from '@/components/BbsSelect.vue';
 import Icon from '@/components/Icon.vue';
+import PlotPresentation from '@/components/PlotPresentation.vue';
 import { apiSettings } from '@/api/settings';
 import { DEFAULT_PLOT_PROMPT, extractPlotSection, plotEligible } from '@/plot/model';
 import { listPlotBeatOptions } from '@/plot/architecture';
@@ -28,6 +29,7 @@ const presetOptions = computed(() => [
 const newPresetName = ref('');
 const presetFile = ref<HTMLInputElement | null>(null);
 const presetMessage = ref('');
+const resultView = ref<'preview' | 'edit'>('preview');
 const beatOptions = computed(() => {
   void derivedMeta.rev;
   const recent = (getContext()?.chat ?? []).filter(plotEligible).slice(-plot.data.settings.contextCount)
@@ -255,7 +257,9 @@ function appendDraft() {
       <p v-if="plot.error" role="alert" class="notice">{{ plot.error }}</p>
     </div>
     <div v-if="plot.result" class="panel">
-      <label>推进建议 · 可编辑<textarea v-model="plot.result" :disabled="plot.busy" rows="12" maxlength="24000" @input="unqueuePlot" /></label>
+      <div class="result-heading"><strong>推进建议</strong><div class="result-view-switch" role="group" aria-label="推进建议显示方式"><button type="button" :class="{ active: resultView === 'preview' }" :aria-pressed="resultView === 'preview'" @click="resultView = 'preview'">美化预览</button><button type="button" :class="{ active: resultView === 'edit' }" :aria-pressed="resultView === 'edit'" @click="resultView = 'edit'">编辑原文</button></div></div>
+      <PlotPresentation v-if="resultView === 'preview'" :text="plot.result" initial-open />
+      <label v-else>推演原文<textarea v-model="plot.result" :disabled="plot.busy" rows="12" maxlength="24000" @input="unqueuePlot" /></label>
       <div class="actions">
         <button type="button" class="bbs-btn bbs-btn-primary" :disabled="plot.busy || !plot.result.trim() || plot.queued" @click="queuePlot">下一次生成使用</button>
         <button type="button" class="bbs-btn" :disabled="plot.busy || !plot.result.trim()" @click="appendDraft">追加到聊天输入框</button>
@@ -290,6 +294,10 @@ header p, .hint { color: var(--bbs-ink-muted); font-size: 12px; margin: 6px 0; }
 .beat-selected { padding: 11px 13px; border-left: 3px solid var(--bbs-accent); border-radius: var(--bbs-radius-sm); background: var(--bbs-surface-2); font-size: 13px; overflow-wrap: anywhere; }
 .beat-selected p { margin: 5px 0; line-height: 1.6; }
 .beat-selected details { margin-top: 7px; }
+.result-heading { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; font-size: 13px; }
+.result-view-switch { display: flex; gap: 3px; padding: 3px; border: 1px solid var(--bbs-line); border-radius: var(--bbs-radius-sm); background: var(--bbs-bg); }
+.result-view-switch button { padding: 5px 8px; border: 0; border-radius: var(--bbs-radius-sm); background: transparent; color: var(--bbs-ink-muted); font: inherit; font-size: 11px; cursor: pointer; }
+.result-view-switch button.active { background: var(--bbs-surface); color: var(--bbs-ink); font-weight: 600; }
 fieldset.panel, .panel > label { display: grid; gap: 10px; }
 label, .label { display: grid; gap: 6px; font-size: 13px; }
 .switch { display: flex; align-items: center; gap: 8px; }
