@@ -80,6 +80,12 @@ export function selectPlotPreset(name: string): void {
       const value = preset.bbsSettings?.[key];
       if (value !== undefined) (plot.data.settings as unknown as Record<string, unknown>)[key] = key === 'realism' ? value === true : value;
     }
+    const promptMode = preset.bbsSettings?.promptMode;
+    if (promptMode === 'classic' || promptMode === 'causal' || promptMode === 'custom') {
+      plot.data.settings.promptMode = promptMode;
+    } else if (typeof preset.bbsSettings?.prompt === 'string' && preset.bbsSettings.prompt.trim()) {
+      plot.data.settings.promptMode = 'custom';
+    }
     if (preset.bbsSettings?.contextCount === undefined && Number.isFinite(preset.contextTurnCount)) {
       plot.data.settings.contextCount = Math.max(1, Math.min(30, Number(preset.contextTurnCount)));
     }

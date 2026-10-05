@@ -4,7 +4,7 @@ import BbsSelect from '@/components/BbsSelect.vue';
 import Icon from '@/components/Icon.vue';
 import PlotPresentation from '@/components/PlotPresentation.vue';
 import { apiSettings } from '@/api/settings';
-import { DEFAULT_PLOT_PROMPT, extractPlotSection, plotEligible } from '@/plot/model';
+import { extractPlotSection, plotEligible, plotSystemPrompt } from '@/plot/model';
 import { listPlotBeatOptions } from '@/plot/architecture';
 import KnowledgePanel from './KnowledgePanel.vue';
 import { memory, derivedMeta } from '@/memory/store';
@@ -21,11 +21,20 @@ const channels = computed(() => [
     ? [{ value: plot.data.settings.channelId, label: '渠道已删除，请重新选择' }] : []),
 ]);
 const presetOptions = computed(() => [
-  { value: '', label: '柏宝书内置 / 当前自定义' },
+  { value: '', label: '柏宝书内置 / 自定义提示词' },
   ...plotPresets.items.map(p => ({ value: p.name, label: p.name })),
   ...(plot.data.settings.presetName && !plotPresets.items.some(p => p.name === plot.data.settings.presetName)
     ? [{ value: plot.data.settings.presetName, label: '预设已删除，请重新选择' }] : []),
 ]);
+const promptOptions = [
+  { value: 'classic', label: '内置一：自然衔接（原版）' },
+  { value: 'causal', label: '内置二：角色因果（新）' },
+  { value: 'custom', label: '自定义提示词' },
+];
+const activePrompt = computed(() => plotSystemPrompt(plot.data.settings));
+function selectPromptMode(value: string) {
+  if (value === 'classic' || value === 'causal' || value === 'custom') plot.data.settings.promptMode = value;
+}
 const newPresetName = ref('');
 const presetFile = ref<HTMLInputElement | null>(null);
 const presetMessage = ref('');
@@ -164,7 +173,7 @@ function appendDraft() {
           <details v-if="selectedAction"><summary>查看下一段行动</summary><p>{{ selectedAction }}</p></details>
         </div>
       </template>
-      <p v-else class="hint">导入预设仍按自身任务顺序推演。切换到“内置 / 当前自定义”即可使用自动情节点选择。</p>
+      <p v-else class="hint">导入预设仍按自身任务顺序推演。切换到“柏宝书内置 / 自定义提示词”即可使用自动情节点选择。</p>
     </section>
     <p v-if="!plot.available" class="notice">请先打开一个聊天，再配置或使用剧情推进。</p>
     <div v-if="plot.data.delivery" class="panel" role="status">
@@ -180,7 +189,7 @@ function appendDraft() {
       <label>剧情推进预设
         <BbsSelect :model-value="plot.data.settings.presetName" :options="presetOptions" aria-label="剧情推进预设" @update:model-value="selectPlotPreset" />
       </label>
-      <p class="hint">内置模式会自动挑选下一情节点，使用精简上下文完成一次推演。也可导入数据库本体的 JSON 预设；选中预设时按其任务顺序执行，可能需要多次模型调用。预设库跨聊天保存，当前选择随聊天保存。</p>
+      <p class="hint">内置模式有两套可选提示词，都会自动挑选下一情节点，使用精简上下文完成一次推演。也可导入数据库本体的 JSON 预设；选中预设时按其任务顺序执行，可能需要多次模型调用。预设库跨聊天保存，当前选择随聊天保存。</p>
       <p class="hint">依赖原脚本专属表格、Agent 世界书控制或其他插件变量的预设，可导入保存，但这些能力无法在柏宝书中执行；请先手动推演一次检查结果。</p>
       <div class="actions">
         <input ref="presetFile" class="file-input" type="file" accept=".json,application/json" aria-label="选择剧情推进预设 JSON" @change="onPresetFile" />
@@ -239,13 +248,20 @@ function appendDraft() {
         </template>
       </details>
       <label v-if="!plot.data.settings.presetName">长期推进偏好<textarea v-model="plot.data.settings.direction" rows="2" maxlength="8000" placeholder="例如：节奏放缓，优先发展人物关系，适时回应未解悬念。" /></label>
-      <details v-if="!plot.data.settings.presetName">
-        <summary>自定义推演提示词</summary>
-        <p class="hint">留空使用内置提示词；近期剧情、记忆、状态和本轮意图会自动附在后面。</p>
-        <textarea v-model="plot.data.settings.prompt" rows="7" maxlength="16000" :placeholder="DEFAULT_PLOT_PROMPT" aria-label="自定义推演提示词" />
-        <button type="button" class="bbs-btn" @click="plot.data.settings.prompt = ''">恢复默认</button>
+      <label v-if="!plot.data.settings.presetName">推演提示词
+        <BbsSelect :model-value="plot.data.settings.promptMode" :options="promptOptions" aria-label="推演提示词" @update:model-value="selectPromptMode" />
+      </label>
+      <p v-if="!plot.data.settings.presetName" class="hint">{{ plot.data.settings.promptMode === 'causal' ? '角色因果：核对行动触发、角色目标与已知信息，再安排一个有即时后果的情节点。' : plot.data.settings.promptMode === 'custom' ? '自定义：使用下方提示词；原有自定义内容会保留。' : '自然衔接：沿用原版内置提示词，优先顺接当前场景。' }}切换仅影响之后的新推演。</p>
+      <details v-if="!plot.data.settings.presetName && plot.data.settings.promptMode !== 'custom'">
+        <summary>查看当前内置提示词</summary>
+        <pre>{{ activePrompt }}</pre>
       </details>
-      <p v-else class="hint">当前由预设中的提示词驱动推演。切回「内置 / 当前自定义」可继续编辑原有提示词。</p>
+      <details v-if="!plot.data.settings.presetName && plot.data.settings.promptMode === 'custom'" open>
+        <summary>自定义推演提示词</summary>
+        <p class="hint">近期剧情、记忆、状态和本轮意图会自动附在后面。留空时暂用内置一。</p>
+        <textarea v-model="plot.data.settings.prompt" rows="7" maxlength="16000" placeholder="输入自己的剧情推进提示词" aria-label="自定义推演提示词" />
+      </details>
+      <p v-if="plot.data.settings.presetName" class="hint">当前由预设中的提示词驱动推演。切回「柏宝书内置 / 自定义提示词」可选择两套内置提示词或继续编辑原有提示词。</p>
     </fieldset>
     <div class="panel">
       <label>本轮意图<textarea v-model="plot.data.draft" :disabled="!plot.available || plot.busy" rows="3" maxlength="8000" placeholder="想怎么推进？留空则根据最近对话推演。自动模式使用实际发送的用户消息。" /></label>

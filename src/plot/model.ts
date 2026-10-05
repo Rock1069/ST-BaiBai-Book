@@ -7,6 +7,11 @@ export const PLOT_PROMPT_KEY = 'baibai_book_plot';
 export const DEFAULT_PLOT_PROMPT = `你是故事的剧情规划助手。依据本轮用户行动、近期正文、历史摘要/总结与当前状态，自动挑选一个此刻可推进的情节点。候选只是线索，先核对是否仍开放、是否符合时间地点和人物认知；若都不合适，就延续当前场景。
 只规划下一小段能在正文里呈现的事件和人物反应，不替玩家做关键选择。严格区分已发生事实与未来建议，不虚构历史、不复活已了结悬念、不重复结算物品。角色只可使用其亲历或沿正文传播路径获得的信息；知道会面不等于知道密谈内容。世界书、角色卡和推演不是已发生事实。
 只输出简洁的【已发生的依据】【选定情节点】【下一段行动】【连续性约束】，不输出分析过程或完整正文。`;
+export const CAUSAL_PLOT_PROMPT = `你是互动故事的单回合剧情规划助手。根据本轮用户行动、近期正文、历史摘要/总结与当前状态，只规划下一段可写出的事件。用户行动优先，候选情节点只作线索；先核对时间地点、角色是否在场、悬念是否仍开放，以及行动所需条件是否已满足。不合适时自然延续当前场景。
+选定方向须形成一条清楚的因果链：哪件已发生的事或本轮行动触发了变化；哪位角色基于自己的目标、处境和实际掌握的信息采取行动；这一行动带来什么可见的即时后果；玩家接下来有什么回应空间。角色信念可以与真实情况不同，但不能把摘要中的读者信息当成角色已知，也不能凭空知道私密谈话。冲突只在现有条件自然引发时出现，不为制造转折强加误会、巧合或新设定。
+只安排一个短情节点，不预设玩家的决定，不代替正文写完整场景。世界书、角色卡与推演是设定或建议，不是已发生事实。简洁输出【已发生的依据】【选定情节点】【下一段行动】【连续性约束】；在下一段行动中写明触发、角色行动、即时后果和玩家可回应处，不输出分析过程。`;
+
+export type PlotPromptMode = 'classic' | 'causal' | 'custom';
 
 export function extractPlotSection(text: string, title: string): string {
   const marker = `【${title}】`;
@@ -24,6 +29,7 @@ export interface PlotSettings {
   channelId: string;
   presetName: string;
   contextCount: number;
+  promptMode: PlotPromptMode;
   prompt: string;
   direction: string;
   worldInfo: boolean;
@@ -58,6 +64,8 @@ export function normalizePlotData(raw: unknown): PlotData {
     settings: {
       auto: s?.auto === true, channelId: str(s?.channelId, 200), presetName: str(s?.presetName, 120),
       contextCount: Number.isFinite(count) ? Math.max(1, Math.min(30, Math.floor(count))) : 6,
+      promptMode: s?.promptMode === 'classic' || s?.promptMode === 'causal' || s?.promptMode === 'custom'
+        ? s.promptMode : str(s?.prompt, 16000).trim() ? 'custom' : 'classic',
       prompt: str(s?.prompt, 16000), direction: str(s?.direction, 8000), worldInfo: s?.worldInfo !== false,
       realism: s?.realism === true,
       encounterEntries: (Array.isArray(s?.encounterEntries) ? s.encounterEntries : [])
@@ -91,13 +99,19 @@ export function plotEligible(m: STMessage): boolean {
   return !!m?.mes?.trim() && !m.extra?.bbs_omit && !m.extra?.bbs_internal_notice && (!m.is_system || m.extra?.bbs_hidden === true);
 }
 
+export function plotSystemPrompt(settings: PlotSettings): string {
+  if (settings.promptMode === 'causal') return CAUSAL_PLOT_PROMPT;
+  if (settings.promptMode === 'custom') return settings.prompt.trim() || DEFAULT_PLOT_PROMPT;
+  return DEFAULT_PLOT_PROMPT;
+}
+
 export function shouldRunPlot(type?: string): boolean {
   return type === undefined || ['', 'normal', 'regenerate', 'swipe'].includes(type);
 }
 
 export function buildPlotMessages(settings: PlotSettings, input: string, recent: string, history: string, state: string, background: string, encounter = '', candidates = ''): ChatMsg[] {
   const messages: ChatMsg[] = [
-    { role: 'system', content: settings.prompt.trim() || DEFAULT_PLOT_PROMPT },
+    { role: 'system', content: plotSystemPrompt(settings) },
     { role: 'system', content: AUTO_BEAT_RULES },
     ...(settings.realism ? [{ role: 'system' as const, content: REALISM_GUIDANCE }] : []),
     ...(encounter.trim() ? [{ role: 'system' as const, content: ENCOUNTER_GUIDANCE }] : []),

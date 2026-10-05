@@ -1,6 +1,6 @@
 import type { ChatMsg } from '@/api/client';
 import type { PlotSettings } from './model';
-import { ENCOUNTER_GUIDANCE } from './model';
+import { ENCOUNTER_GUIDANCE, plotSystemPrompt } from './model';
 import { REALISM_GUIDANCE } from './realism';
 
 /** 第三方预设的提示词是数据，只在用户选用后交给推演模型。 */
@@ -80,7 +80,7 @@ export function currentPlotPreset(name: string, settings: PlotSettings): PlotPre
     contextTurnCount: settings.contextCount,
     plotTasks: [{ id: 'bbsPlotTask', name: '剧情推演', enabled: true, order: 0, stage: 1,
       promptGroup: [
-        { role: 'SYSTEM', content: settings.prompt.trim() || '根据已有资料，为下一段剧情提供自然衔接的推进建议。' },
+        { role: 'SYSTEM', content: plotSystemPrompt(settings) },
         { role: 'USER', content: '【角色与世界设定】\n$U\n$C\n$1\n【历史摘要】\n$5\n【当前状态】\n$S\n【最近剧情】\n$7\n【本轮用户意图】\n$8' },
       ] }],
   };
