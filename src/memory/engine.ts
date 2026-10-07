@@ -3,7 +3,8 @@ import { mainApiAvailable, requestCompletion, requestViaMainApi } from '@/api/cl
 import { apiSettings, engineActiveHere, getChannelForTask } from '@/api/settings';
 import type { TaskType } from '@/api/settings';
 import type { STMessage, WorldInfoEntry } from '@/st/context';
-import { getContext, getCheckWorldInfo, getEjsTemplate, getWorldInfoBookEntry, setMessageText } from '@/st/context';
+import { getCharacterWorldInfoNames, getContext, getCheckWorldInfo, getEjsTemplate, getWorldInfoBookEntry, loadWorldInfoBookEntries, setMessageText } from '@/st/context';
+import type { PlotSettings } from '@/plot/model';
 import { toast } from '@/st/toast';
 import { addSummary, classifyNpcPresence, deriveMemory, finalizeDelta, fmtVarOpsInline, getLeaf, invalidateSummaryAncestors, itemChangesOf, leafValid, makeLeafId, pruneBrokenComps, syncItemLogFromMessage } from './apply';
 import { WEATHER_KEY, groundedWeatherElapsed, normalizeWeatherData } from '@/weather/model';
@@ -281,7 +282,7 @@ function sortWorldInfoEntriesLikeST(entries: WorldInfoEntry[]): WorldInfoEntry[]
  * checkWorldInfo 取不到(旧版/路径变动)→ 降级到 getWorldInfoPrompt(不过滤,但摘要照常带书,不崩)。
  * 无激活条目 / 角色卡无世界书 / 出错 → 返回空串(不影响摘要正常运行)。
  */
-export async function fetchWorldInfo(chat: STMessage[], targets: number[], name1: string, name2: string, additionalScanText = ''): Promise<string> {
+export async function fetchWorldInfo(chat: STMessage[], targets: number[], name1: string, name2: string, additionalScanText = '', allowEntry?: (entry: WorldInfoEntry) => boolean): Promise<string> {
   const scanText = buildScanText(chat, targets, name1, name2);
   // 剧情推演可附带尚未发送的本轮意图，不创建虚构楼层或改变 EJS 的变量时点。
   if (additionalScanText.trim()) scanText.push(additionalScanText.trim());
@@ -291,7 +292,7 @@ export async function fetchWorldInfo(chat: STMessage[], targets: number[], name1
   const refFloor = targets.length ? targets[targets.length - 1] : undefined;
   try {
     const check = await getCheckWorldInfo();
-    if (!check) return await fetchWorldInfoViaPrompt(scanText, refFloor); // 降级:拿不到条目对象,无从过滤
+    if (!check) return allowEntry ? '' : await fetchWorldInfoViaPrompt(scanText, refFloor); // 无条目元信息时不能绕过推进的选书限制
 
     const res = await check(scanText, HUGE_WI_CONTEXT, true);
     const activated = res?.allActivatedEntries;
@@ -304,12 +305,65 @@ export async function fetchWorldInfo(chat: STMessage[], targets: number[], name1
     // 逐条渲染(展宏 + 执行 EJS),让「按好感度切换人设」等动态条目拿到成品而非原文;变量按 refFloor 取历史值
     const chunks = await Promise.all(
       entries
-        .filter(e => e && !isWorldInfoEntryExcluded(e))
+        .filter(e => e && !isWorldInfoEntryExcluded(e) && (!allowEntry || allowEntry(e)))
         .map(e => renderWorldInfoContent(typeof e.content === 'string' ? e.content : '', e, refFloor)),
     );
     return joinWorldInfoChunks(chunks);
   } catch (e) {
     console.log('[柏宝书] 世界书激活失败(降级为不带设定):', e);
+    return '';
+  }
+}
+
+function plotEntrySelected(settings: PlotSettings, entry: WorldInfoEntry): boolean {
+  const world = String(entry.world ?? '');
+  const selected = settings.worldbookEntries[world];
+  return !selected || selected.includes(String(entry.uid ?? ''));
+}
+
+/** 手动选书不依赖 ST 当前激活名单；按条目常驻/关键词规则筛选，避免整本书无条件塞入推演。 */
+function plotEntryMatches(entry: WorldInfoEntry, scan: string): boolean {
+  if (entry.constant === true) return true;
+  const keys = (Array.isArray(entry.key) ? entry.key : typeof entry.key === 'string' ? [entry.key] : [])
+    .filter((key): key is string => typeof key === 'string' && !!key.trim());
+  if (!keys.length) return false;
+  const caseSensitive = entry.caseSensitive === true;
+  const text = caseSensitive ? scan : scan.toLocaleLowerCase();
+  const matches = (key: string) => text.includes(caseSensitive ? key : key.toLocaleLowerCase());
+  if (!keys.some(matches)) return false;
+  const secondary = (Array.isArray(entry.keysecondary) ? entry.keysecondary : [])
+    .filter((key): key is string => typeof key === 'string' && !!key.trim());
+  if (!secondary.length) return true;
+  const hits = secondary.filter(matches).length;
+  switch (Number(entry.selectiveLogic ?? 0)) {
+    case 1: return hits < secondary.length;
+    case 2: return hits === 0;
+    case 3: return hits === secondary.length;
+    default: return hits > 0;
+  }
+}
+
+/** 剧情推进专用世界书：角色绑定或用户手选，条目开关只作用于推演请求。 */
+export async function fetchPlotWorldInfo(chat: STMessage[], targets: number[], name1: string, name2: string, input: string, settings: PlotSettings): Promise<string> {
+  const names = settings.worldbookSource === 'manual'
+    ? settings.selectedWorldbooks : await getCharacterWorldInfoNames();
+  const allowed = new Set(names);
+  if (!allowed.size) return '';
+  if (settings.worldbookSource === 'character' && await getCheckWorldInfo()) {
+    return fetchWorldInfo(chat, targets, name1, name2, input,
+      entry => allowed.has(String(entry.world ?? '')) && plotEntrySelected(settings, entry));
+  }
+  const scan = [...buildScanText(chat, targets, name1, name2), input].join('\n');
+  const refFloor = targets.length ? targets[targets.length - 1] : undefined;
+  try {
+    const entries = sortWorldInfoEntriesLikeST(await loadWorldInfoBookEntries([...allowed]));
+    const chunks = await Promise.all(entries
+      .filter(entry => entry && entry.disable !== true && typeof entry.content === 'string' && entry.content.trim()
+        && !isWorldInfoEntryExcluded(entry) && plotEntrySelected(settings, entry) && plotEntryMatches(entry, scan))
+      .map(entry => renderWorldInfoContent(String(entry.content), entry, refFloor)));
+    return joinWorldInfoChunks(chunks);
+  } catch (e) {
+    console.log('[柏宝书] 剧情推进手选世界书读取失败:', e);
     return '';
   }
 }

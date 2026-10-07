@@ -10,7 +10,7 @@ import { bindPlot, cancelPlot, exportSelectedPlotPreset, generatePlot, importPlo
 import { PLOT_KEY, PLOT_PROMPT_KEY } from './model';
 import { REALISM_GUIDANCE } from './realism';
 
-vi.mock('@/memory/engine', () => ({ currentSummaryPromise: () => null, fetchCharCard: () => '角色设定', fetchUserPersona: () => '', fetchWorldInfo: async () => '' }));
+vi.mock('@/memory/engine', () => ({ currentSummaryPromise: () => null, fetchCharCard: () => '角色设定', fetchUserPersona: () => '', fetchWorldInfo: async () => '', fetchPlotWorldInfo: async () => '' }));
 vi.mock('@/memory/inject', () => ({ buildStateInjectionText: () => '当前状态', renderHistoryNodes: () => '历史', selectHistoryNodesBefore: () => [] }));
 vi.mock('@/memory/store', () => ({ memory: { summaries: [], knowledge: [] } }));
 

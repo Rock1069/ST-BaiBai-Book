@@ -5,8 +5,10 @@ import Icon from '@/components/Icon.vue';
 import PlotPresentation from '@/components/PlotPresentation.vue';
 import { apiSettings } from '@/api/settings';
 import { extractPlotSection, plotEligible, plotSystemPrompt } from '@/plot/model';
+import { plotPresetCompatibility } from '@/plot/presets';
 import { listPlotBeatOptions } from '@/plot/architecture';
 import KnowledgePanel from './KnowledgePanel.vue';
+import WorldbookPanel from './WorldbookPanel.vue';
 import { memory, derivedMeta } from '@/memory/store';
 import { cleanBody } from '@/memory/timeTag';
 import { cancelPlot, exportSelectedPlotPreset, generatePlot, importPlotPresetText, plot, plotPresets, queuePlot, removeSelectedPlotPreset, saveCurrentPlotPreset, selectPlotPreset, unqueuePlot } from '@/plot/store';
@@ -26,6 +28,10 @@ const presetOptions = computed(() => [
   ...(plot.data.settings.presetName && !plotPresets.items.some(p => p.name === plot.data.settings.presetName)
     ? [{ value: plot.data.settings.presetName, label: '预设已删除，请重新选择' }] : []),
 ]);
+const presetCompatibility = computed(() => {
+  const selected = plotPresets.items.find(item => item.name === plot.data.settings.presetName);
+  return selected ? plotPresetCompatibility(selected) : null;
+});
 const promptOptions = [
   { value: 'classic', label: '内置一：自然衔接（原版）' },
   { value: 'causal', label: '内置二：角色因果（新）' },
@@ -190,6 +196,11 @@ function appendDraft() {
         <BbsSelect :model-value="plot.data.settings.presetName" :options="presetOptions" aria-label="剧情推进预设" @update:model-value="selectPlotPreset" />
       </label>
       <p class="hint">内置模式有两套可选提示词，都会自动挑选下一情节点，使用精简上下文完成一次推演。也可导入数据库本体的 JSON 预设；选中预设时按其任务顺序执行，可能需要多次模型调用。预设库跨聊天保存，当前选择随聊天保存。</p>
+      <div v-if="presetCompatibility" class="preset-compatibility" role="status">
+        <strong>自动识别：{{ presetCompatibility.layout }} · {{ presetCompatibility.taskCount }} 个任务</strong>
+        <p v-for="notice in presetCompatibility.notices" :key="notice">{{ notice }}</p>
+        <p v-if="!presetCompatibility.notices.length">提示词结构已识别，按该预设自身的任务顺序执行。</p>
+      </div>
       <p class="hint">依赖原脚本专属表格、Agent 世界书控制或其他插件变量的预设，可导入保存，但这些能力无法在柏宝书中执行；请先手动推演一次检查结果。</p>
       <div class="actions">
         <input ref="presetFile" class="file-input" type="file" accept=".json,application/json" aria-label="选择剧情推进预设 JSON" @change="onPresetFile" />
@@ -212,7 +223,6 @@ function appendDraft() {
         <div><span class="label">推演 API</span><BbsSelect v-model="plot.data.settings.channelId" :options="channels" aria-label="推演 API" /></div>
         <label>近期正文条数<input v-model.number="plot.data.settings.contextCount" type="number" min="1" max="30" /></label>
       </div>
-      <label class="switch"><input v-model="plot.data.settings.worldInfo" type="checkbox" /> 参考已激活世界书（沿用设置页排除规则）</label>
       <details class="encounter-panel">
         <summary>邂逅候选（{{ plot.data.settings.encounterEntries.length }}）</summary>
         <p class="hint">从世界书中选择女性角色。每次推演会随机抽取一位，把她的设定交给模型参考；模型会结合当前剧情安排自然相遇，场景不合适时可以延后。</p>
@@ -263,6 +273,7 @@ function appendDraft() {
       </details>
       <p v-if="plot.data.settings.presetName" class="hint">当前由预设中的提示词驱动推演。切回「柏宝书内置 / 自定义提示词」可选择两套内置提示词或继续编辑原有提示词。</p>
     </fieldset>
+    <WorldbookPanel />
     <div class="panel">
       <label>本轮意图<textarea v-model="plot.data.draft" :disabled="!plot.available || plot.busy" rows="3" maxlength="8000" placeholder="想怎么推进？留空则根据最近对话推演。自动模式使用实际发送的用户消息。" /></label>
       <div class="actions">
@@ -326,6 +337,8 @@ input[type='checkbox'] { accent-color: var(--bbs-accent); }
 .file-input { display: none; }
 input[type='text'] { min-width: 180px; flex: 1; padding: 8px 11px; border: 1px solid var(--bbs-line-strong); border-radius: var(--bbs-radius-sm); background: var(--bbs-bg); color: var(--bbs-ink); }
 .notice { border-left: 3px solid var(--bbs-accent); padding: 8px 12px; background: var(--bbs-surface-2); overflow-wrap: anywhere; }
+.preset-compatibility { padding: 9px 11px; border-radius: var(--bbs-radius-sm); background: var(--bbs-surface-2); font-size: 12px; }
+.preset-compatibility p { margin: 4px 0 0; color: var(--bbs-ink-muted); }
 summary { cursor: pointer; font-size: 13px; }
 .encounter-panel { display: grid; gap: 8px; padding-top: 8px; border-top: 1px solid var(--bbs-line); }
 .encounter-selected { display: flex; flex-wrap: wrap; gap: 6px; }

@@ -33,6 +33,10 @@ export interface PlotSettings {
   prompt: string;
   direction: string;
   worldInfo: boolean;
+  worldbookSource: 'character' | 'manual';
+  selectedWorldbooks: string[];
+  /** 键为世界书名，值为该书允许进入推演的条目 uid；未设置的书沿用 ST 启用状态。 */
+  worldbookEntries: Record<string, string[]>;
   /** 只在推演请求中补充写实检查，默认关闭，随聊天保存。 */
   realism: boolean;
   /** 用户从世界书挑选的邂逅候选,只保存世界书名与条目 uid。 */
@@ -67,6 +71,13 @@ export function normalizePlotData(raw: unknown): PlotData {
       promptMode: s?.promptMode === 'classic' || s?.promptMode === 'causal' || s?.promptMode === 'custom'
         ? s.promptMode : str(s?.prompt, 16000).trim() ? 'custom' : 'classic',
       prompt: str(s?.prompt, 16000), direction: str(s?.direction, 8000), worldInfo: s?.worldInfo !== false,
+      worldbookSource: s?.worldbookSource === 'manual' ? 'manual' : 'character',
+      selectedWorldbooks: [...new Set((Array.isArray(s?.selectedWorldbooks) ? s.selectedWorldbooks : [])
+        .filter((name): name is string => typeof name === 'string').map(name => name.trim().slice(0, 300)).filter(Boolean))].slice(0, 100),
+      worldbookEntries: Object.fromEntries(Object.entries(s?.worldbookEntries && typeof s.worldbookEntries === 'object' && !Array.isArray(s.worldbookEntries)
+        ? s.worldbookEntries : {}).slice(0, 100).filter(([name, ids]) => !!name.trim() && Array.isArray(ids))
+        .map(([name, ids]) => [name.slice(0, 300), [...new Set((ids as unknown[])
+          .filter((uid): uid is string => typeof uid === 'string').map(uid => uid.slice(0, 100)))].slice(0, 2000)])),
       realism: s?.realism === true,
       encounterEntries: (Array.isArray(s?.encounterEntries) ? s.encounterEntries : [])
         .filter(e => e && typeof e === 'object' && typeof (e as { world?: unknown }).world === 'string' &&

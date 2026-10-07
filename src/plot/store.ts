@@ -6,13 +6,13 @@ import { toast } from '@/st/toast';
 import { memory } from '@/memory/store';
 import { formatKnowledge } from '@/memory/knowledge';
 import { buildStateInjectionText, renderHistoryNodes, selectHistoryNodesBefore } from '@/memory/inject';
-import { currentSummaryPromise, fetchCharCard, fetchEncounterProfile, fetchUserPersona, fetchWorldInfo } from '@/memory/engine';
+import { currentSummaryPromise, fetchCharCard, fetchEncounterProfile, fetchPlotWorldInfo, fetchUserPersona } from '@/memory/engine';
 import { cleanBody, stripThinkBlocks } from '@/memory/timeTag';
 import { prepareWeather } from '@/weather/store';
 import { refreshPlotMessageCards } from '@/plotMessageCards';
 import { buildPlotMessages, normalizePlotData, normalizePlotTurnPlan, plotEligible, plotInjection, PLOT_KEY, PLOT_PROMPT_KEY, shouldRunPlot, type PlotTurnPlan } from './model';
 import { plotBeatCandidates, selectPlotHistory } from './architecture';
-import { activePlotTasks, currentPlotPreset, exportPlotPreset, extractTaskOutput, parsePlotPresets, recalledDetails, renderPresetMessages, type PlotMaterials, type PlotPreset } from './presets';
+import { activePlotTasks, currentPlotPreset, exportPlotPreset, extractTaskOutput, parsePlotPresets, plotPresetDirective, recalledDetails, renderPresetMessages, type PlotMaterials, type PlotPreset } from './presets';
 
 export const plot = reactive({ data: normalizePlotData(null), busy: false, autoBusy: false, phase: '', error: '', result: '', queued: false, available: false });
 export const plotPresets = reactive<{ items: PlotPreset[] }>({ items: [] });
@@ -122,6 +122,32 @@ function chatScope(): string {
 function userMessages(): STMessage[] {
   return (getContext()?.chat ?? []).filter(m => m.is_user);
 }
+/** 只复用已经交给正文并产生回复的旧推演档案，避免把未采用的草稿当成既成设定。 */
+function priorSubmittedFiles(chat: STMessage[]): string {
+  const files: string[] = [];
+  const seen = new Set<string>();
+  let hasReply = false;
+  for (let i = chat.length - 1; i >= 0 && files.length < 6; i--) {
+    const message = chat[i];
+    if (!message?.is_user) {
+      if (message && !message.is_system && plotEligible(message)) hasReply = true;
+      continue;
+    }
+    const accepted = hasReply;
+    hasReply = false;
+    if (!accepted) continue;
+    const plan = normalizePlotTurnPlan(message.extra?.bbs_plot_plan);
+    if (!plan) continue;
+    const blocks = [...plan.text.matchAll(/<file>([\s\S]*?)<\/file>/gi)].map(match => match[1].trim()).filter(Boolean);
+    for (const block of blocks.reverse()) {
+      if (seen.has(block)) continue;
+      seen.add(block);
+      files.push(block.slice(0, 4000));
+      if (files.length >= 6) break;
+    }
+  }
+  return files.join('\n\n').slice(0, 12000);
+}
 function sameUsers(expected: STMessage[]): boolean {
   const actual = userMessages();
   return actual.length === expected.length && expected.every((m, i) => actual[i] === m);
@@ -147,7 +173,7 @@ function latestUserInput(): string {
 function delivery(status: 'submitted' | 'skipped', source: 'auto' | 'manual', input: string, reason = '', prompt = '', reused = false): void {
   plot.data.delivery = { status, source, input, at: Date.now(), reason, prompt, reused };
 }
-function submitPlot(text: string, source: 'auto' | 'manual', input: string, directive = activePreset()?.finalSystemDirective ?? '', reused = false): void {
+function submitPlot(text: string, source: 'auto' | 'manual', input: string, directive = plotPresetDirective(activePreset()), reused = false): void {
   const fn = getContext()?.setExtensionPrompt;
   if (!fn) { delivery('skipped', source, input, '当前 ST 不支持扩展提示注入'); return; }
   const prompt = plotInjection(text, directive, input, formatKnowledge(memory.knowledge));
@@ -157,7 +183,7 @@ function submitPlot(text: string, source: 'auto' | 'manual', input: string, dire
 }
 function rememberPlot(text: string, source: 'auto' | 'manual', user: STMessage | null): void {
   if (!user) return;
-  const plan: PlotTurnPlan = { text, source, directive: activePreset()?.finalSystemDirective ?? '', createdAt: Date.now() };
+  const plan: PlotTurnPlan = { text, source, directive: plotPresetDirective(activePreset()), createdAt: Date.now() };
   (user.extra ??= {}).bbs_plot_plan = plan;
   refreshPlotMessageCards();
   // 正文可能失败或被停止，不能等 AI 成功落楼才保存已付费获得的推演。
@@ -267,7 +293,7 @@ export async function generatePlot(input = plot.data.draft, weatherPrepared = fa
       ? settings.encounterEntries[Math.floor(Math.random() * settings.encounterEntries.length)]
       : undefined;
     const [world, encounter] = await Promise.all([
-      settings.worldInfo ? abortable(fetchWorldInfo(ctx.chat, recent.map(r => r.i), ctx.name1, ctx.name2, input), ctrl.signal) : Promise.resolve(''),
+      settings.worldInfo ? abortable(fetchPlotWorldInfo(ctx.chat, recent.map(r => r.i), ctx.name1, ctx.name2, input, settings), ctrl.signal) : Promise.resolve(''),
       pickedEncounter ? abortable(fetchEncounterProfile(pickedEncounter.world, pickedEncounter.uid), ctrl.signal) : Promise.resolve(''),
     ]);
     if (!current()) return null;
@@ -275,12 +301,14 @@ export async function generatePlot(input = plot.data.draft, weatherPrepared = fa
     const preset = settings.presetName ? plotPresets.items.find(p => p.name === settings.presetName) : undefined;
     if (settings.presetName && !preset) throw new Error('所选剧情推进预设已删除，请重新选择');
     const request = (messages: Parameters<typeof requestViaMainApi>[0]) =>
-      abortable(channel ? requestCompletion(channel, messages, { signal: ctrl.signal }) : requestViaMainApi(messages), ctrl.signal);
+      abortable(channel ? requestCompletion(channel, messages, { signal: ctrl.signal, plotTask: !!preset })
+        : requestViaMainApi(messages, { plotTask: !!preset }), ctrl.signal);
     let raw: string;
     if (preset) {
       const history = renderHistoryNodes(priorNodes);
       const indexed = historyNodes.slice(-120).map((node, i) => ({ code: `AM${String(i + 1).padStart(4, '0')}`, text: node.text.slice(0, 2200) }));
-      const materials: PlotMaterials = { input, recent: recentText, history, state, knowledge, encounter, realism: settings.realism, world, card: charCard, persona, indexed };
+      const previousFiles = /\{\{file\}\}/i.test(plotPresetDirective(preset)) ? priorSubmittedFiles(ctx.chat) : '';
+      const materials: PlotMaterials = { input, recent: recentText, history, state, knowledge, encounter, realism: settings.realism, previousFiles, world, card: charCard, persona, indexed };
       let previous = '';
       const taskResults: string[] = [];
       const recalled: string[] = [];

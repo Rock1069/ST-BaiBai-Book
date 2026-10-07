@@ -262,7 +262,43 @@ export interface WorldInfoCatalogEntry {
   comment: string;
   content: string;
   keys: string[];
+  constant: boolean;
   disabled: boolean;
+}
+
+/** 与 ST 的角色世界书绑定保持一致：主书来自角色卡，附加书来自 world_info.charLore。 */
+export async function getCharacterWorldInfoNames(): Promise<string[]> {
+  const ctx = getContext();
+  if (!ctx || ctx.groupId || ctx.characterId === undefined || ctx.characterId === null || ctx.characterId === '') return [];
+  const character = ctx.characters?.[Number(ctx.characterId)] as Record<string, unknown> | undefined;
+  if (!character) return [];
+  const wiPath = '/scripts/world-info.js';
+  const mod = await import(/* @vite-ignore */ wiPath) as Record<string, unknown>;
+  const data = character.data as { extensions?: { world?: unknown } } | undefined;
+  const primary = data?.extensions?.world ?? character.world;
+  const avatar = typeof character.avatar === 'string' ? character.avatar : '';
+  const stem = avatar.replace(/\.[^.]+$/, '');
+  const lore = (mod.world_info as { charLore?: Array<{ name?: string; extraBooks?: unknown }> } | undefined)?.charLore;
+  const extra = lore?.find(item => item.name === stem || item.name === avatar)?.extraBooks;
+  return [...new Set([primary, ...(Array.isArray(extra) ? extra : [])]
+    .filter((name): name is string => typeof name === 'string' && !!name.trim()).map(name => name.trim()))];
+}
+
+/** 只读取指定书，不把未选择的世界书载入推演。 */
+export async function loadWorldInfoBookEntries(names: string[]): Promise<WorldInfoEntry[]> {
+  if (!names.length) return [];
+  const wiPath = '/scripts/world-info.js';
+  const mod = await import(/* @vite-ignore */ wiPath) as Record<string, unknown>;
+  const load = mod.loadWorldInfo;
+  if (typeof load !== 'function') throw new Error('当前 SillyTavern 版本不支持读取世界书条目');
+  const books = await Promise.all([...new Set(names)].map(async world => {
+    const data = await (load as (name: string) => Promise<unknown>)(world);
+    const entries = data && typeof data === 'object' ? (data as { entries?: unknown }).entries : null;
+    if (!entries || typeof entries !== 'object') return [];
+    return Object.entries(entries as Record<string, unknown>).flatMap(([key, raw]) =>
+      raw && typeof raw === 'object' ? [{ ...(raw as WorldInfoEntry), uid: String((raw as WorldInfoEntry).uid ?? key), world }] : []);
+  }));
+  return books.flat();
 }
 
 /**
@@ -297,6 +333,7 @@ export async function listWorldInfoEntries(): Promise<WorldInfoCatalogEntry[]> {
         comment: typeof entry.comment === 'string' ? entry.comment.trim() : '',
         content,
         keys: rawKeys.filter((x): x is string => typeof x === 'string'),
+        constant: entry.constant === true,
         disabled: entry.disable === true,
       }];
     });

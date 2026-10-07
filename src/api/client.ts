@@ -45,8 +45,10 @@ function alternateUrl(url: string): string {
 
 export interface RequestOptions {
   signal?: AbortSignal;
-  /** 摘要、批量摘要及总结请求才按模型自动切换预填充。 */
+  /** 摘要、批量摘要及总结请求按模型自动切换预填充。 */
   summaryTask?: boolean;
+  /** 第三方剧情预设可用不同消息结尾，按模型整理成可发送的请求。 */
+  plotTask?: boolean;
 }
 
 function validTimeoutSec(value: unknown): number {
@@ -55,7 +57,7 @@ function validTimeoutSec(value: unknown): number {
     : DEFAULT_TIMEOUT_SEC;
 }
 
-/** 已知 Gemini 型号按模型名选用摘要/总结的预填充方式；其他型号沿用渠道开关。 */
+/** 已知 Gemini 型号按模型名选用预填充方式；其他型号沿用渠道开关。 */
 function shouldSendPrefill(model: string | null | undefined, fallback: boolean): boolean {
   if (!model) return fallback;
   if (/gemini[-_ ]?3\.8[-_ ]?flash(?=$|[-_./: ])/i.test(model)) return false;
@@ -71,6 +73,13 @@ function prepareMessages(messages: ChatMsg[], prefill: boolean): ChatMsg[] {
   return withoutPrefill[withoutPrefill.length - 1]?.role === 'user'
     ? withoutPrefill
     : [...withoutPrefill, { role: 'user', content: '请依据以上要求完成任务，输出规定格式的完整结果。' }];
+}
+
+function preparePlotMessages(messages: ChatMsg[], prefill: boolean): ChatMsg[] {
+  const prepared = prepareMessages(messages, prefill);
+  return prepared[prepared.length - 1]?.role === 'system'
+    ? [...prepared, { role: 'user', content: '请依据以上设定与本轮输入完成当前任务，按要求输出完整结果。' }]
+    : prepared;
 }
 
 /**
@@ -208,12 +217,13 @@ async function requestCompletionAtUrl(
   if (!channel.url || !channel.model) throw new ApiError('副 API 渠道未配置完整(缺 url 或 model)');
 
   const stream = channel.stream ?? false;
-  // 只对摘要任务按 Gemini 型号自动分流；其他请求沿用渠道原有开关行为。
-  const prefill = opts.summaryTask
+  // 摘要和剧情预设按已知模型处理末尾预填充；其他请求沿用渠道开关。
+  const prefill = opts.summaryTask || opts.plotTask
     ? shouldSendPrefill(channel.model, channel.prefill !== false)
     : channel.prefill !== false;
-  const outMessages = opts.summaryTask
-    ? prepareMessages(messages, prefill)
+  const outMessages = opts.plotTask
+    ? preparePlotMessages(messages, prefill)
+    : opts.summaryTask ? prepareMessages(messages, prefill)
     : !prefill && messages[messages.length - 1]?.role === 'assistant'
       ? messages.slice(0, -1)
       : messages;
@@ -329,10 +339,11 @@ export async function requestViaMainApi(messages: ChatMsg[], opts: RequestOption
   }
   // 主 API 为聊天补全时，ST 的 getChatCompletionModel 返回当前选中的实际模型名。
   // 旧版 ST 没有该方法或使用文本补全时，保持原有预填充行为。
-  const model = opts.summaryTask && ctx.mainApi === 'openai' && typeof ctx.getChatCompletionModel === 'function'
+  const model = (opts.summaryTask || opts.plotTask) && ctx.mainApi === 'openai' && typeof ctx.getChatCompletionModel === 'function'
     ? ctx.getChatCompletionModel()
     : null;
-  const prompt = opts.summaryTask ? prepareMessages(messages, shouldSendPrefill(model, true)) : messages;
+  const prompt = opts.plotTask ? preparePlotMessages(messages, shouldSendPrefill(model, true))
+    : opts.summaryTask ? prepareMessages(messages, shouldSendPrefill(model, true)) : messages;
   const content = (await ctx.generateRaw({ prompt, responseLength: MAIN_API_RESPONSE_LENGTH }))?.trim();
   if (!content) throw new ApiError('主 API 返回空内容');
   return content;
