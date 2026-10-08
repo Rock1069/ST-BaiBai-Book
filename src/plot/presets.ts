@@ -1,6 +1,7 @@
 import type { ChatMsg } from '@/api/client';
 import type { PlotSettings } from './model';
-import { ENCOUNTER_GUIDANCE, plotSystemPrompt } from './model';
+import { builtInPlotDirective, ENCOUNTER_GUIDANCE, plotSystemPrompt } from './model';
+import { DEM_STABS_MATERIALS_TEMPLATE } from './demStabs';
 import { REALISM_GUIDANCE } from './realism';
 
 /** 第三方预设的提示词是数据，只在用户选用后交给推演模型。 */
@@ -198,10 +199,13 @@ export function currentPlotPreset(name: string, settings: PlotSettings): PlotPre
     bbsSettings: saved,
     worldbookEnabled: settings.worldInfo,
     contextTurnCount: settings.contextCount,
+    ...(builtInPlotDirective(settings) ? { finalSystemDirective: builtInPlotDirective(settings) } : {}),
     plotTasks: [{ id: 'bbsPlotTask', name: '剧情推演', enabled: true, order: 0, stage: 1,
       promptGroup: [
         { role: 'SYSTEM', content: plotSystemPrompt(settings) },
-        { role: 'USER', content: '【角色与世界设定】\n$U\n$C\n$1\n【历史摘要】\n$5\n【当前状态】\n$S\n【最近剧情】\n$7\n【本轮用户意图】\n$8' },
+        { role: 'USER', content: settings.promptMode === 'dem_stabs'
+          ? `${DEM_STABS_MATERIALS_TEMPLATE}\n【推进偏好】\n${settings.direction || '自然衔接，适度推进'}`
+          : '【角色与世界设定】\n$U\n$C\n$1\n【历史摘要】\n$5\n【当前状态】\n$S\n【最近剧情】\n$7\n【本轮用户意图】\n$8' },
       ] }],
   };
 }

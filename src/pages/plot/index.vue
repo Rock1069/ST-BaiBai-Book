@@ -4,14 +4,14 @@ import BbsSelect from '@/components/BbsSelect.vue';
 import Icon from '@/components/Icon.vue';
 import PlotPresentation from '@/components/PlotPresentation.vue';
 import { apiSettings } from '@/api/settings';
-import { extractPlotSection, plotEligible, plotSystemPrompt } from '@/plot/model';
+import { extractPlotSection, isPlotPromptMode, plotEligible, plotSystemPrompt } from '@/plot/model';
 import { plotPresetCompatibility } from '@/plot/presets';
 import { listPlotBeatOptions } from '@/plot/architecture';
 import KnowledgePanel from './KnowledgePanel.vue';
 import WorldbookPanel from './WorldbookPanel.vue';
 import { memory, derivedMeta } from '@/memory/store';
 import { cleanBody } from '@/memory/timeTag';
-import { cancelPlot, exportSelectedPlotPreset, generatePlot, importPlotPresetText, plot, plotPresets, queuePlot, removeSelectedPlotPreset, saveCurrentPlotPreset, selectPlotPreset, unqueuePlot } from '@/plot/store';
+import { cancelPlot, exportSelectedPlotPreset, generatePlot, importPlotPresetText, loadPlotRecord, plot, plotDraftForChat, plotPresets, queuePlot, removeSelectedPlotPreset, saveCurrentPlotPreset, selectPlotPreset, unqueuePlot } from '@/plot/store';
 import { appendChatInput, getContext, listWorldInfoEntries, type WorldInfoCatalogEntry } from '@/st/context';
 import { toast } from '@/st/toast';
 import { closeBook } from '@/state/ui';
@@ -35,12 +35,19 @@ const presetCompatibility = computed(() => {
 const promptOptions = [
   { value: 'classic', label: '内置一：自然衔接（原版）' },
   { value: 'causal', label: '内置二：角色因果（新）' },
+  { value: 'dem_stabs', label: '内置三：DEM × Stab’s（场景导演）' },
   { value: 'custom', label: '自定义提示词' },
 ];
 const activePrompt = computed(() => plotSystemPrompt(plot.data.settings));
 function selectPromptMode(value: string) {
-  if (value === 'classic' || value === 'causal' || value === 'custom') plot.data.settings.promptMode = value;
+  if (isPlotPromptMode(value)) plot.data.settings.promptMode = value;
 }
+const promptDescription = computed(() => ({
+  classic: '自然衔接：沿用原版内置提示词，优先顺接当前场景。',
+  causal: '角色因果：核对行动触发、角色目标与已知信息，再安排一个有即时后果的情节点。',
+  dem_stabs: '场景导演：结合 DEM 的路线与伏笔推进、Stab’s 的人物行为与认知边界，四条候选自动择一；一次调用完成，只把选定规划交给正文。',
+  custom: '自定义：使用下方提示词；原有自定义内容会保留。',
+})[plot.data.settings.promptMode]);
 const newPresetName = ref('');
 const presetFile = ref<HTMLInputElement | null>(null);
 const presetMessage = ref('');
@@ -147,7 +154,7 @@ function removePreset() {
   presetMessage.value = `已删除预设「${name}」`;
 }
 function appendDraft() {
-  if (appendChatInput(`【下一段剧情方向（尚未发生）】\n${plot.result.trim()}`)) {
+  if (appendChatInput(plotDraftForChat())) {
     unqueuePlot();
     closeBook();
     toast('已追加到输入框，可修改后发送', 'success');
@@ -195,7 +202,7 @@ function appendDraft() {
       <label>剧情推进预设
         <BbsSelect :model-value="plot.data.settings.presetName" :options="presetOptions" aria-label="剧情推进预设" @update:model-value="selectPlotPreset" />
       </label>
-      <p class="hint">内置模式有两套可选提示词，都会自动挑选下一情节点，使用精简上下文完成一次推演。也可导入数据库本体的 JSON 预设；选中预设时按其任务顺序执行，可能需要多次模型调用。预设库跨聊天保存，当前选择随聊天保存。</p>
+      <p class="hint">内置模式有三套可选提示词，都会自动挑选下一情节点，使用精简上下文完成一次推演。也可导入数据库本体的 JSON 预设；选中预设时按其任务顺序执行，可能需要多次模型调用。预设库跨聊天保存，当前选择随聊天保存。</p>
       <div v-if="presetCompatibility" class="preset-compatibility" role="status">
         <strong>自动识别：{{ presetCompatibility.layout }} · {{ presetCompatibility.taskCount }} 个任务</strong>
         <p v-for="notice in presetCompatibility.notices" :key="notice">{{ notice }}</p>
@@ -261,7 +268,7 @@ function appendDraft() {
       <label v-if="!plot.data.settings.presetName">推演提示词
         <BbsSelect :model-value="plot.data.settings.promptMode" :options="promptOptions" aria-label="推演提示词" @update:model-value="selectPromptMode" />
       </label>
-      <p v-if="!plot.data.settings.presetName" class="hint">{{ plot.data.settings.promptMode === 'causal' ? '角色因果：核对行动触发、角色目标与已知信息，再安排一个有即时后果的情节点。' : plot.data.settings.promptMode === 'custom' ? '自定义：使用下方提示词；原有自定义内容会保留。' : '自然衔接：沿用原版内置提示词，优先顺接当前场景。' }}切换仅影响之后的新推演。</p>
+      <p v-if="!plot.data.settings.presetName" class="hint">{{ promptDescription }}切换仅影响之后的新推演。</p>
       <details v-if="!plot.data.settings.presetName && plot.data.settings.promptMode !== 'custom'">
         <summary>查看当前内置提示词</summary>
         <pre>{{ activePrompt }}</pre>
@@ -271,7 +278,7 @@ function appendDraft() {
         <p class="hint">近期剧情、记忆、状态和本轮意图会自动附在后面。留空时暂用内置一。</p>
         <textarea v-model="plot.data.settings.prompt" rows="7" maxlength="16000" placeholder="输入自己的剧情推进提示词" aria-label="自定义推演提示词" />
       </details>
-      <p v-if="plot.data.settings.presetName" class="hint">当前由预设中的提示词驱动推演。切回「柏宝书内置 / 自定义提示词」可选择两套内置提示词或继续编辑原有提示词。</p>
+      <p v-if="plot.data.settings.presetName" class="hint">当前由预设中的提示词驱动推演。切回「柏宝书内置 / 自定义提示词」可选择三套内置提示词或继续编辑原有提示词。</p>
     </fieldset>
     <WorldbookPanel />
     <div class="panel">
@@ -297,7 +304,7 @@ function appendDraft() {
     <details v-if="plot.data.history.length" class="panel">
       <summary>最近推演记录（{{ plot.data.history.length }}/10）</summary>
       <article v-for="(record, index) in plot.data.history" :key="`${record.createdAt}-${index}`">
-        <div class="actions"><span class="hint">{{ new Date(record.createdAt).toLocaleString() }}</span><button type="button" class="bbs-btn" :disabled="plot.busy" @click="unqueuePlot(); plot.result = record.text">载入编辑</button></div>
+        <div class="actions"><span class="hint">{{ new Date(record.createdAt).toLocaleString() }}</span><button type="button" class="bbs-btn" :disabled="plot.busy" @click="loadPlotRecord(record)">载入编辑</button></div>
         <p class="hint">{{ record.input || '自然推进' }}</p>
         <pre>{{ record.text }}</pre>
       </article>

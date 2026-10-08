@@ -10,8 +10,9 @@ import { currentSummaryPromise, fetchCharCard, fetchEncounterProfile, fetchPlotW
 import { cleanBody, stripThinkBlocks } from '@/memory/timeTag';
 import { prepareWeather } from '@/weather/store';
 import { refreshPlotMessageCards } from '@/plotMessageCards';
-import { buildPlotMessages, normalizePlotData, normalizePlotTurnPlan, plotEligible, plotInjection, PLOT_KEY, PLOT_PROMPT_KEY, shouldRunPlot, type PlotTurnPlan } from './model';
+import { buildPlotMessages, builtInPlotDirective, isPlotPromptMode, normalizePlotData, normalizePlotTurnPlan, plotEligible, plotInjection, PLOT_KEY, PLOT_PROMPT_KEY, shouldRunPlot, type PlotRecord, type PlotTurnPlan } from './model';
 import { plotBeatCandidates, selectPlotHistory } from './architecture';
+import { DEM_STABS_DIRECTIVE, selectedDemStabsPlan } from './demStabs';
 import { activePlotTasks, currentPlotPreset, exportPlotPreset, extractTaskOutput, parsePlotPresets, plotPresetDirective, recalledDetails, renderPresetMessages, type PlotMaterials, type PlotPreset } from './presets';
 
 export const plot = reactive({ data: normalizePlotData(null), busy: false, autoBusy: false, phase: '', error: '', result: '', queued: false, available: false });
@@ -81,7 +82,7 @@ export function selectPlotPreset(name: string): void {
       if (value !== undefined) (plot.data.settings as unknown as Record<string, unknown>)[key] = key === 'realism' ? value === true : value;
     }
     const promptMode = preset.bbsSettings?.promptMode;
-    if (promptMode === 'classic' || promptMode === 'causal' || promptMode === 'custom') {
+    if (isPlotPromptMode(promptMode)) {
       plot.data.settings.promptMode = promptMode;
     } else if (typeof preset.bbsSettings?.prompt === 'string' && preset.bbsSettings.prompt.trim()) {
       plot.data.settings.promptMode = 'custom';
@@ -112,6 +113,25 @@ export function removeSelectedPlotPreset(): void {
 }
 function activePreset(): PlotPreset | undefined {
   return plotPresets.items.find(p => p.name === plot.data.settings.presetName);
+}
+function activeDirective(): string {
+  const preset = activePreset();
+  return preset ? plotPresetDirective(preset) : builtInPlotDirective(plot.data.settings);
+}
+function resultDirective(): string {
+  // 已有草稿跟随生成时的约束，不能因切换模式丢失未选路线的过滤。
+  return plot.data.resultDirective ?? activeDirective();
+}
+export function loadPlotRecord(record: PlotRecord): void {
+  unqueuePlot();
+  plot.data.resultDirective = record.directive;
+  plot.result = record.text;
+}
+export function plotDraftForChat(): string {
+  const directive = resultDirective();
+  const text = directive === DEM_STABS_DIRECTIVE
+    ? `${directive}\n\n${selectedDemStabsPlan(plot.result)}` : plot.result.trim();
+  return `【下一段剧情方向（尚未发生）】\n${text}`;
 }
 
 function chatScope(): string {
@@ -173,7 +193,7 @@ function latestUserInput(): string {
 function delivery(status: 'submitted' | 'skipped', source: 'auto' | 'manual', input: string, reason = '', prompt = '', reused = false): void {
   plot.data.delivery = { status, source, input, at: Date.now(), reason, prompt, reused };
 }
-function submitPlot(text: string, source: 'auto' | 'manual', input: string, directive = plotPresetDirective(activePreset()), reused = false): void {
+function submitPlot(text: string, source: 'auto' | 'manual', input: string, directive = resultDirective(), reused = false): void {
   const fn = getContext()?.setExtensionPrompt;
   if (!fn) { delivery('skipped', source, input, '当前 ST 不支持扩展提示注入'); return; }
   const prompt = plotInjection(text, directive, input, formatKnowledge(memory.knowledge));
@@ -183,7 +203,7 @@ function submitPlot(text: string, source: 'auto' | 'manual', input: string, dire
 }
 function rememberPlot(text: string, source: 'auto' | 'manual', user: STMessage | null): void {
   if (!user) return;
-  const plan: PlotTurnPlan = { text, source, directive: plotPresetDirective(activePreset()), createdAt: Date.now() };
+  const plan: PlotTurnPlan = { text, source, directive: resultDirective(), createdAt: Date.now() };
   (user.extra ??= {}).bbs_plot_plan = plan;
   refreshPlotMessageCards();
   // 正文可能失败或被停止，不能等 AI 成功落楼才保存已付费获得的推演。
@@ -219,6 +239,7 @@ function loadPlot(): void {
   scope = chatScope();
   plot.available = !!scope;
   plot.data = normalizePlotData(scope ? getContext()?.chatMetadata?.[PLOT_KEY] : null);
+  if (!plot.data.result) plot.data.resultDirective = plot.data.history[0]?.directive;
   plot.result = plot.data.result || plot.data.history[0]?.text || '';
   plot.error = '';
   ready = true;
@@ -336,8 +357,10 @@ export async function generatePlot(input = plot.data.draft, weatherPrepared = fa
     if (!current()) return null;
     const text = stripThinkBlocks(raw).replace(/<(?:think|thinking|thought)\b[^>]*>[\s\S]*?(?:<\/(?:think|thinking|thought)>|$)/gi, '').trim().slice(0, 24000);
     if (!text) throw new Error('模型未返回有效的剧情推进内容');
+    const directive = preset ? plotPresetDirective(preset) : builtInPlotDirective(settings);
+    plot.data.resultDirective = directive;
     plot.result = text;
-    plot.data.history.unshift({ text, input, createdAt: Date.now() });
+    plot.data.history.unshift({ text, input, createdAt: Date.now(), directive });
     plot.data.history.splice(10);
     return text;
   } catch (e) {
@@ -375,6 +398,7 @@ export async function preparePlot(type?: string, weatherPrepared = false): Promi
   const user = latestUserMessage();
   const saved = normalizePlotTurnPlan(user?.extra?.bbs_plot_plan);
   if (saved) {
+    plot.data.resultDirective = saved.directive;
     plot.result = saved.text;
     submitPlot(saved.text, saved.source, latestUserInput(), saved.directive, true);
     return;

@@ -1,6 +1,7 @@
 import type { ChatMsg } from '@/api/client';
 import type { STMessage } from '@/st/context';
 import { REALISM_GUIDANCE } from './realism';
+import { DEM_STABS_DIRECTIVE, DEM_STABS_PLOT_PROMPT, selectedDemStabsPlan } from './demStabs';
 
 export const PLOT_KEY = 'bbs_plot';
 export const PLOT_PROMPT_KEY = 'baibai_book_plot';
@@ -11,7 +12,15 @@ export const CAUSAL_PLOT_PROMPT = `你是互动故事的单回合剧情规划助
 选定方向须形成一条清楚的因果链：哪件已发生的事或本轮行动触发了变化；哪位角色基于自己的目标、处境和实际掌握的信息采取行动；这一行动带来什么可见的即时后果；玩家接下来有什么回应空间。角色信念可以与真实情况不同，但不能把摘要中的读者信息当成角色已知，也不能凭空知道私密谈话。冲突只在现有条件自然引发时出现，不为制造转折强加误会、巧合或新设定。
 只安排一个短情节点，不预设玩家的决定，不代替正文写完整场景。世界书、角色卡与推演是设定或建议，不是已发生事实。简洁输出【已发生的依据】【选定情节点】【下一段行动】【连续性约束】；在下一段行动中写明触发、角色行动、即时后果和玩家可回应处，不输出分析过程。`;
 
-export type PlotPromptMode = 'classic' | 'causal' | 'custom';
+export type PlotPromptMode = 'classic' | 'causal' | 'dem_stabs' | 'custom';
+
+export function isPlotPromptMode(value: unknown): value is PlotPromptMode {
+  return value === 'classic' || value === 'causal' || value === 'dem_stabs' || value === 'custom';
+}
+
+export function builtInPlotDirective(settings: PlotSettings): string {
+  return settings.promptMode === 'dem_stabs' ? DEM_STABS_DIRECTIVE : '';
+}
 
 export function extractPlotSection(text: string, title: string): string {
   const marker = `【${title}】`;
@@ -42,11 +51,11 @@ export interface PlotSettings {
   /** 用户从世界书挑选的邂逅候选,只保存世界书名与条目 uid。 */
   encounterEntries: Array<{ world: string; uid: string }>;
 }
-export interface PlotRecord { text: string; input: string; createdAt: number }
+export interface PlotRecord { text: string; input: string; createdAt: number; directive?: string }
 /** 保存到对应用户消息的 extra；删除该消息时，计划自然随之删除。 */
 export interface PlotTurnPlan { text: string; source: 'auto' | 'manual'; directive: string; createdAt: number }
 export interface PlotDelivery { status: 'submitted' | 'skipped'; source: 'auto' | 'manual'; input: string; at: number; reason?: string; prompt?: string; reused?: boolean }
-export interface PlotData { settings: PlotSettings; draft: string; result: string; history: PlotRecord[]; delivery: PlotDelivery | null }
+export interface PlotData { settings: PlotSettings; draft: string; result: string; resultDirective?: string; history: PlotRecord[]; delivery: PlotDelivery | null }
 
 export function normalizePlotTurnPlan(raw: unknown): PlotTurnPlan | null {
   if (!raw || typeof raw !== 'object') return null;
@@ -68,7 +77,7 @@ export function normalizePlotData(raw: unknown): PlotData {
     settings: {
       auto: s?.auto === true, channelId: str(s?.channelId, 200), presetName: str(s?.presetName, 120),
       contextCount: Number.isFinite(count) ? Math.max(1, Math.min(30, Math.floor(count))) : 6,
-      promptMode: s?.promptMode === 'classic' || s?.promptMode === 'causal' || s?.promptMode === 'custom'
+      promptMode: isPlotPromptMode(s?.promptMode)
         ? s.promptMode : str(s?.prompt, 16000).trim() ? 'custom' : 'classic',
       prompt: str(s?.prompt, 16000), direction: str(s?.direction, 8000), worldInfo: s?.worldInfo !== false,
       worldbookSource: s?.worldbookSource === 'manual' ? 'manual' : 'character',
@@ -89,6 +98,7 @@ export function normalizePlotData(raw: unknown): PlotData {
     },
     draft: str(data.draft, 8000),
     result: str(data.result, 24000),
+    resultDirective: typeof data.resultDirective === 'string' ? str(data.resultDirective, 50000) : undefined,
     delivery: data.delivery && typeof data.delivery === 'object' &&
       (data.delivery.status === 'submitted' || data.delivery.status === 'skipped') &&
       (data.delivery.source === 'auto' || data.delivery.source === 'manual')
@@ -97,7 +107,8 @@ export function normalizePlotData(raw: unknown): PlotData {
         prompt: str(data.delivery.prompt, 50000), reused: data.delivery.reused === true }
       : null,
     history: (Array.isArray(data.history) ? data.history : []).filter(r => r && typeof r.text === 'string' && r.text.trim())
-      .slice(0, 10).map(r => ({ text: str(r.text, 24000), input: str(r.input, 8000), createdAt: Number(r.createdAt) || 0 })),
+      .slice(0, 10).map(r => ({ text: str(r.text, 24000), input: str(r.input, 8000), createdAt: Number(r.createdAt) || 0,
+        directive: typeof r.directive === 'string' ? str(r.directive, 50000) : undefined })),
   };
 }
 
@@ -111,6 +122,7 @@ export function plotEligible(m: STMessage): boolean {
 }
 
 export function plotSystemPrompt(settings: PlotSettings): string {
+  if (settings.promptMode === 'dem_stabs') return DEM_STABS_PLOT_PROMPT;
   if (settings.promptMode === 'causal') return CAUSAL_PLOT_PROMPT;
   if (settings.promptMode === 'custom') return settings.prompt.trim() || DEFAULT_PLOT_PROMPT;
   return DEFAULT_PLOT_PROMPT;
@@ -141,7 +153,7 @@ export function buildPlotMessages(settings: PlotSettings, input: string, recent:
 }
 
 export function plotInjection(text: string, directive = '', input = '', knowledge = ''): string {
-  const result = text.trim();
+  const result = (directive.trim() === DEM_STABS_DIRECTIVE ? selectedDemStabsPlan(text) : text).trim();
   const originalInput = input.trim();
   const template = directive.trim();
   let planned = result;

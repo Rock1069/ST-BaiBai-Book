@@ -38,7 +38,9 @@ function plainSections(text: string): PlotDisplaySection[] {
   const flush = () => {
     const content = body.join('\n').trim();
     if (content) result.push({ title, body: content,
-      kind: /选定情节点|下一段行动|推进建议/.test(title) ? 'focus' : 'plain' });
+      kind: /选定情节点|下一段行动|推进建议/.test(title) ? 'focus'
+        : title === '场景规划' ? 'scene' : title === '角色认知边界' ? 'track'
+          : title === '剧情线索' ? 'story' : 'plain' });
     body = [];
   };
   for (const line of text.split('\n')) {
@@ -95,6 +97,7 @@ export function parsePlotDisplay(raw: string): PlotDisplay {
   }).trim();
   if (leftovers) sections.push(...plainSections(leftovers));
   if (!sections.length && text) sections.push(...plainSections(text));
+  if (!scene) scene = sections.find(section => section.title === '场景规划')?.body ?? '';
 
   const timeline = scene.match(/^\s*Day\s*[:：]\s*(.+?)[,，\s]+(\d{1,2}\s*[:：]\s*\d{2})/im);
   const day = timeline?.[1]?.trim() || '';
